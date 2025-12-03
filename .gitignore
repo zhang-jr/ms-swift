@@ -149,3 +149,14 @@ megatron_output/
 
 # ast template
 ast_index_file.py
+
+# Claude Code
+.claude/
+
+# Frontend
+node_modules/
+custom_ui/frontend/dist/
+custom_ui/frontend/.vite/
+custom_ui/docker/data/
+custom_ui/docker/models/
+custom_ui/docker/output/
