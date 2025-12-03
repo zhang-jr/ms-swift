@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  ms-swift-custom-ui:
+    build:
+      context: ../..
+      dockerfile: custom_ui/docker/Dockerfile
+    container_name: ms-swift-ui
+    ports:
+      - "8000:8000"   # API 和前端访问端口
+      - "3000:3000"   # 前端开发端口(可选)
+    volumes:
+      # 挂载数据目录
+      - ./data:/app/data
+      # 挂载模型目录
+      - ./models:/app/models
+      # 挂载输出目录
+      - ./output:/app/output
+      # 挂载配置文件(可选)
+      # - ./config:/app/config
+    environment:
+      # CUDA 设备
+      - CUDA_VISIBLE_DEVICES=0
+      # Python 环境变量
+      - PYTHONUNBUFFERED=1
+      # ModelScope 缓存目录
+      - MODELSCOPE_CACHE=/app/models
+      # HuggingFace 缓存目录
+      - HF_HOME=/app/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1  # 使用 1 个 GPU，可根据需要调整
+              capabilities: [gpu]
+    restart: unless-stopped
+    stdin_open: true
+    tty: true
+
+# 可选：添加其他服务
+# services:
+#   redis:
+#     image: redis:7-alpine
+#     ports:
+#       - "6379:6379"
+#     volumes:
+#       - redis_data:/data
+#
+# volumes:
+#   redis_data:
