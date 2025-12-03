@@ -1,0 +1,16 @@
+# MS-SWIFT Custom UI Backend Requirements
+
+# FastAPI and server
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+websockets>=12.0
+
+# HTTP client
+httpx>=0.25.0
+
+# MS-SWIFT (from parent directory)
+# Install with: pip install -e ../..
+
+# Optional: for production deployment
+gunicorn>=21.2.0
