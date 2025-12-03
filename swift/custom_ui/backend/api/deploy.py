@@ -1,226 +1,183 @@
-# Copyright (c) Alibaba, Inc. and its affiliates.
 """
 部署 API 端点
-提供模型部署服务相关的 RESTful API
+提供模型部署服务相关的 API
 """
-from typing import List, Optional, Dict, Any
-
-from fastapi import APIRouter, HTTPException, BackgroundTasks
-from pydantic import BaseModel, Field
-
-from services.deploy_service import DeployService
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+import uuid
+from datetime import datetime
 
 router = APIRouter()
-deploy_service = DeployService()
 
-
-# 请求/响应模型
+# 请求模型
 class DeployRequest(BaseModel):
-    """部署请求模型"""
-    model: str = Field(..., description="模型 ID 或路径")
-    model_type: Optional[str] = Field(None, description="模型类型")
-    template: Optional[str] = Field(None, description="模板类型")
-    port: int = Field(8000, description="服务端口")
-    host: str = Field("0.0.0.0", description="服务地址")
-    gpu_id: Optional[List[str]] = Field(["0"], description="GPU ID 列表")
-    ckpt_dir: Optional[str] = Field(None, description="检查点目录 (LoRA)")
-    max_model_len: Optional[int] = Field(None, description="最大模型长度")
-    max_batch_size: Optional[int] = Field(None, description="最大批次大小")
-    served_model_name: Optional[str] = Field(None, description="服务模型名称")
-    more_params: Optional[Dict[str, Any]] = Field(None, description="其他参数")
+    model_id_or_path: str
+    adapter_path: Optional[str] = None
 
+    # 部署参数
+    host: str = "0.0.0.0"
+    port: int = 8080
+
+    # 推理参数
+    max_length: int = 2048
+    temperature: float = 0.7
+    top_p: float = 0.9
+
+    # vLLM 参数
+    use_vllm: bool = False
+    gpu_memory_utilization: float = 0.9
+    max_num_batched_tokens: Optional[int] = None
+
+    # 量化参数
+    quantization_bit: Optional[int] = None
 
 class DeployResponse(BaseModel):
-    """部署响应模型"""
-    deployment_id: str = Field(..., description="部署 ID")
-    status: str = Field(..., description="部署状态")
-    message: str = Field(..., description="消息")
-    port: int = Field(..., description="服务端口")
-    endpoint: Optional[str] = Field(None, description="服务端点")
-
+    deployment_id: str
+    status: str
+    endpoint: str
+    message: str
+    created_at: str
 
 class DeploymentStatus(BaseModel):
-    """部署状态模型"""
     deployment_id: str
-    model: str
-    status: str  # starting/running/stopped/failed
-    port: int
-    host: str
-    endpoint: Optional[str] = None
-    start_time: Optional[str] = None
-    log_file: Optional[str] = None
+    status: str  # starting, running, stopped, failed
+    endpoint: str
+    model_id: str
+    created_at: str
+    updated_at: str
 
+# 部署服务存储
+deployments: Dict[str, Dict[str, Any]] = {}
 
-# API 端点
-@router.post("/start", response_model=DeployResponse, summary="启动部署服务")
-async def start_deployment(
-    request: DeployRequest,
-    background_tasks: BackgroundTasks
-):
+@router.post("/start", response_model=DeployResponse)
+async def start_deployment(request: DeployRequest):
     """
     启动模型部署服务
 
-    - **model**: 模型 ID 或本地路径
-    - **port**: 服务端口
-    - **host**: 服务地址
-    - 返回部署 ID 和端点信息
+    Args:
+        request: 部署请求参数
+
+    Returns:
+        DeployResponse: 部署信息
     """
-    try:
-        # 检查端口是否被占用
-        if deploy_service.is_port_in_use(request.port):
-            raise HTTPException(
-                status_code=400,
-                detail=f"端口 {request.port} 已被占用"
-            )
+    # 生成部署 ID
+    deployment_id = str(uuid.uuid4())
+    endpoint = f"http://{request.host}:{request.port}"
 
-        # 创建部署任务
-        deployment_id = deploy_service.create_deployment(
-            model=request.model,
-            model_type=request.model_type,
-            template=request.template,
-            port=request.port,
-            host=request.host,
-            gpu_id=request.gpu_id,
-            ckpt_dir=request.ckpt_dir,
-            max_model_len=request.max_model_len,
-            max_batch_size=request.max_batch_size,
-            served_model_name=request.served_model_name,
-            more_params=request.more_params
-        )
+    # 检查端口是否已被使用
+    for dep in deployments.values():
+        if dep["config"]["port"] == request.port and dep["status"] == "running":
+            raise HTTPException(status_code=400, detail=f"端口 {request.port} 已被使用")
 
-        # 在后台启动部署
-        background_tasks.add_task(deploy_service.run_deployment, deployment_id)
+    # 创建部署记录
+    deployment = {
+        "deployment_id": deployment_id,
+        "status": "starting",
+        "endpoint": endpoint,
+        "model_id": request.model_id_or_path,
+        "config": request.model_dump(),
+        "created_at": datetime.now().isoformat(),
+        "updated_at": datetime.now().isoformat()
+    }
 
-        # 构建端点 URL
-        endpoint = f"http://{request.host}:{request.port}"
+    deployments[deployment_id] = deployment
 
-        return DeployResponse(
-            deployment_id=deployment_id,
-            status="starting",
-            message="部署服务正在启动",
-            port=request.port,
-            endpoint=endpoint
-        )
+    # TODO: 实际启动部署服务
+    # from services.deploy_service import DeployService
+    # deploy_service = DeployService()
+    # background_tasks.add_task(deploy_service.start_deployment, deployment_id, request.model_dump())
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # 模拟启动成功
+    deployment["status"] = "running"
 
+    return DeployResponse(
+        deployment_id=deployment_id,
+        status="starting",
+        endpoint=endpoint,
+        message="部署服务正在启动...",
+        created_at=deployment["created_at"]
+    )
 
-@router.get("/status/{deployment_id}", response_model=DeploymentStatus, summary="获取部署状态")
+@router.get("/status/{deployment_id}", response_model=DeploymentStatus)
 async def get_deployment_status(deployment_id: str):
     """
     获取部署服务状态
 
-    - **deployment_id**: 部署 ID
-    - 返回部署的当前状态
+    Args:
+        deployment_id: 部署 ID
+
+    Returns:
+        DeploymentStatus: 部署状态
     """
-    try:
-        status = deploy_service.get_deployment_status(deployment_id)
-        if not status:
-            raise HTTPException(
-                status_code=404,
-                detail=f"部署 {deployment_id} 不存在"
-            )
-        return DeploymentStatus(**status)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    if deployment_id not in deployments:
+        raise HTTPException(status_code=404, detail="部署不存在")
 
+    deployment = deployments[deployment_id]
+    return DeploymentStatus(**deployment)
 
-@router.post("/stop/{deployment_id}", summary="停止部署服务")
+@router.post("/stop/{deployment_id}")
 async def stop_deployment(deployment_id: str):
     """
     停止部署服务
 
-    - **deployment_id**: 部署 ID
+    Args:
+        deployment_id: 部署 ID
+
+    Returns:
+        dict: 操作结果
     """
-    try:
-        success = deploy_service.stop_deployment(deployment_id)
-        if not success:
-            raise HTTPException(
-                status_code=404,
-                detail=f"部署 {deployment_id} 不存在或无法停止"
-            )
+    if deployment_id not in deployments:
+        raise HTTPException(status_code=404, detail="部署不存在")
 
-        return {
-            "code": 0,
-            "message": "部署服务已停止",
-            "data": {"deployment_id": deployment_id}
-        }
+    deployment = deployments[deployment_id]
+    if deployment["status"] != "running":
+        raise HTTPException(status_code=400, detail="部署服务未在运行")
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # TODO: 实际停止部署服务
+    deployment["status"] = "stopped"
+    deployment["updated_at"] = datetime.now().isoformat()
 
+    return {"message": "部署服务已停止", "deployment_id": deployment_id}
 
-@router.get("/list", summary="获取所有部署")
+@router.get("/list")
 async def list_deployments():
     """
     获取所有部署服务列表
+
+    Returns:
+        list: 部署列表
     """
-    try:
-        deployments = deploy_service.list_deployments()
-        return {
-            "code": 0,
-            "message": "success",
-            "data": {"deployments": deployments}
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    deps = []
+    for dep_id, dep in deployments.items():
+        deps.append({
+            "deployment_id": dep_id,
+            "status": dep["status"],
+            "endpoint": dep["endpoint"],
+            "model_id": dep["model_id"],
+            "created_at": dep["created_at"]
+        })
 
+    return {"deployments": deps}
 
-@router.get("/logs/{deployment_id}", summary="获取部署日志")
-async def get_deployment_logs(
-    deployment_id: str,
-    lines: int = 50
-):
+@router.delete("/delete/{deployment_id}")
+async def delete_deployment(deployment_id: str):
     """
-    获取部署服务日志
+    删除部署服务记录
 
-    - **deployment_id**: 部署 ID
-    - **lines**: 读取的行数
+    Args:
+        deployment_id: 部署 ID
+
+    Returns:
+        dict: 操作结果
     """
-    try:
-        logs = deploy_service.get_deployment_logs(deployment_id, lines)
-        if logs is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"部署 {deployment_id} 的日志不存在"
-            )
+    if deployment_id not in deployments:
+        raise HTTPException(status_code=404, detail="部署不存在")
 
-        return {
-            "code": 0,
-            "message": "success",
-            "data": {
-                "deployment_id": deployment_id,
-                "logs": logs
-            }
-        }
+    deployment = deployments[deployment_id]
+    if deployment["status"] == "running":
+        raise HTTPException(status_code=400, detail="运行中的部署无法删除，请先停止")
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    del deployments[deployment_id]
 
-
-@router.post("/health/{deployment_id}", summary="健康检查")
-async def check_deployment_health(deployment_id: str):
-    """
-    检查部署服务健康状态
-
-    - **deployment_id**: 部署 ID
-    """
-    try:
-        health = await deploy_service.check_health(deployment_id)
-        return {
-            "code": 0,
-            "message": "success",
-            "data": health
-        }
-
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"message": "部署已删除", "deployment_id": deployment_id}

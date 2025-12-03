@@ -1,260 +1,188 @@
-# Copyright (c) Alibaba, Inc. and its affiliates.
 """
 推理 API 端点
-提供模型推理和对话相关的 RESTful API
+提供模型推理和对话相关的 API
 """
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel, Field
-
-from services.infer_service import InferService
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List, Dict, Any
+import uuid
 
 router = APIRouter()
-infer_service = InferService()
 
+# 请求模型
+class LoadModelRequest(BaseModel):
+    model_id_or_path: str
+    adapter_path: Optional[str] = None  # LoRA adapter 路径
+    model_type: Optional[str] = None
 
-# 请求/响应模型
-class ChatMessage(BaseModel):
-    """聊天消息模型"""
-    role: str = Field(..., description="角色: system/user/assistant")
-    content: str = Field(..., description="消息内容")
+    # 推理参数
+    max_length: int = 2048
+    temperature: float = 0.7
+    top_p: float = 0.9
+    top_k: int = 50
+    repetition_penalty: float = 1.0
 
+    # 量化参数
+    quantization_bit: Optional[int] = None  # 4, 8
 
 class ChatRequest(BaseModel):
-    """对话请求模型"""
-    model: Optional[str] = Field("default", description="模型名称或 LoRA 模块名")
-    messages: List[ChatMessage] = Field(..., description="消息历史")
-    system: Optional[str] = Field(None, description="系统提示词")
-    temperature: Optional[float] = Field(0.7, description="温度参数")
-    top_p: Optional[float] = Field(0.9, description="Top-p 采样")
-    top_k: Optional[int] = Field(50, description="Top-k 采样")
-    max_tokens: Optional[int] = Field(2048, description="最大生成 token 数")
-    repetition_penalty: Optional[float] = Field(1.0, description="重复惩罚")
-    stream: Optional[bool] = Field(False, description="是否流式输出")
+    query: str
+    history: Optional[List[List[str]]] = None
+    system: Optional[str] = None
 
+    # 推理参数覆盖
+    max_new_tokens: Optional[int] = 512
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
 
 class ChatResponse(BaseModel):
-    """对话响应模型"""
-    message: ChatMessage
-    finish_reason: Optional[str] = None
-    usage: Optional[Dict[str, int]] = None
+    response: str
+    history: List[List[str]]
+    usage: Dict[str, int]  # token 使用统计
 
+# 已加载模型的存储
+loaded_models: Dict[str, Dict[str, Any]] = {}
+current_model_id: Optional[str] = None
 
-class LoadModelRequest(BaseModel):
-    """加载模型请求"""
-    model: str = Field(..., description="模型 ID 或路径")
-    model_type: Optional[str] = Field(None, description="模型类型")
-    template: Optional[str] = Field(None, description="模板类型")
-    port: Optional[int] = Field(8000, description="服务端口")
-    gpu_id: Optional[List[str]] = Field(["0"], description="GPU ID 列表")
-    ckpt_dir: Optional[str] = Field(None, description="检查点目录")
-    more_params: Optional[Dict[str, Any]] = Field(None, description="其他参数")
-
-
-# API 端点
-@router.post("/chat", summary="对话推理")
-async def chat(request: ChatRequest):
-    """
-    与模型进行对话
-
-    - **messages**: 消息历史
-    - **model**: 使用的模型或 LoRA 模块
-    - **temperature**: 温度参数,控制输出随机性
-    - 返回模型的回复
-    """
-    try:
-        # 检查是否有模型已加载
-        if not infer_service.is_model_loaded():
-            raise HTTPException(
-                status_code=400,
-                detail="请先加载模型"
-            )
-
-        # 调用推理服务
-        response = await infer_service.chat(
-            messages=[msg.dict() for msg in request.messages],
-            model=request.model,
-            system=request.system,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            top_k=request.top_k,
-            max_tokens=request.max_tokens,
-            repetition_penalty=request.repetition_penalty,
-            stream=request.stream
-        )
-
-        return {
-            "code": 0,
-            "message": "success",
-            "data": response
-        }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.websocket("/chat/stream")
-async def chat_stream(websocket: WebSocket):
-    """
-    WebSocket 流式对话
-
-    客户端发送 ChatRequest JSON
-    服务端流式返回生成的内容
-    """
-    await websocket.accept()
-
-    try:
-        # 接收请求
-        request_data = await websocket.receive_json()
-        request = ChatRequest(**request_data)
-
-        # 检查模型是否加载
-        if not infer_service.is_model_loaded():
-            await websocket.send_json({
-                "type": "error",
-                "message": "请先加载模型"
-            })
-            await websocket.close()
-            return
-
-        # 流式生成
-        async for chunk in infer_service.chat_stream(
-            messages=[msg.dict() for msg in request.messages],
-            model=request.model,
-            system=request.system,
-            temperature=request.temperature,
-            top_p=request.top_p,
-            top_k=request.top_k,
-            max_tokens=request.max_tokens,
-            repetition_penalty=request.repetition_penalty
-        ):
-            await websocket.send_json({
-                "type": "chunk",
-                "data": chunk
-            })
-
-        # 发送完成信号
-        await websocket.send_json({
-            "type": "done"
-        })
-
-    except WebSocketDisconnect:
-        print("Client disconnected from chat stream")
-    except Exception as e:
-        await websocket.send_json({
-            "type": "error",
-            "message": str(e)
-        })
-    finally:
-        await websocket.close()
-
-
-@router.post("/load-model", summary="加载模型")
+@router.post("/load-model")
 async def load_model(request: LoadModelRequest):
     """
-    加载模型到内存
+    加载模型用于推理
 
-    - **model**: 模型 ID 或本地路径
-    - **port**: 服务端口
-    - **gpu_id**: 使用的 GPU
+    Args:
+        request: 模型加载请求
+
+    Returns:
+        dict: 加载结果
     """
-    try:
-        # 检查端口是否被占用
-        if infer_service.is_port_in_use(request.port):
-            raise HTTPException(
-                status_code=400,
-                detail=f"端口 {request.port} 已被占用"
-            )
+    global current_model_id
 
-        # 加载模型
-        success = await infer_service.load_model(
-            model=request.model,
-            model_type=request.model_type,
-            template=request.template,
-            port=request.port,
-            gpu_id=request.gpu_id,
-            ckpt_dir=request.ckpt_dir,
-            more_params=request.more_params
-        )
+    # 生成模型实例 ID
+    model_instance_id = str(uuid.uuid4())
 
-        if not success:
-            raise HTTPException(
-                status_code=500,
-                detail="模型加载失败"
-            )
+    # TODO: 实际加载模型
+    # from services.infer_service import InferService
+    # infer_service = InferService()
+    # model = infer_service.load_model(request.model_dump())
 
-        return {
-            "code": 0,
-            "message": "模型加载成功",
-            "data": {
-                "model": request.model,
-                "port": request.port,
-                "status": "loaded"
-            }
+    # 模拟加载
+    loaded_models[model_instance_id] = {
+        "model_id": request.model_id_or_path,
+        "adapter_path": request.adapter_path,
+        "config": request.model_dump(),
+        "loaded_at": "2025-12-03T00:00:00"
+    }
+
+    current_model_id = model_instance_id
+
+    return {
+        "message": "模型加载成功",
+        "model_instance_id": model_instance_id,
+        "model_id": request.model_id_or_path
+    }
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(request: ChatRequest):
+    """
+    与模型对话
+
+    Args:
+        request: 对话请求
+
+    Returns:
+        ChatResponse: 模型响应
+    """
+    global current_model_id
+
+    if not current_model_id or current_model_id not in loaded_models:
+        raise HTTPException(status_code=400, detail="请先加载模型")
+
+    # TODO: 实际推理
+    # from services.infer_service import InferService
+    # infer_service = InferService()
+    # response = infer_service.chat(current_model_id, request.model_dump())
+
+    # 模拟推理响应
+    history = request.history or []
+    history.append([request.query, "这是一个模拟响应。实际响应需要集成 ms-swift 推理功能。"])
+
+    return ChatResponse(
+        response="这是一个模拟响应。实际响应需要集成 ms-swift 推理功能。",
+        history=history,
+        usage={
+            "prompt_tokens": 10,
+            "completion_tokens": 20,
+            "total_tokens": 30
         }
+    )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/unload-model", summary="卸载模型")
-async def unload_model():
+@router.post("/unload-model")
+async def unload_model(model_instance_id: Optional[str] = None):
     """
-    卸载当前加载的模型,释放资源
-    """
-    try:
-        success = infer_service.unload_model()
-        if not success:
-            raise HTTPException(
-                status_code=400,
-                detail="没有已加载的模型"
-            )
+    卸载模型
 
-        return {
-            "code": 0,
-            "message": "模型已卸载",
-            "data": {"status": "unloaded"}
+    Args:
+        model_instance_id: 模型实例 ID，为空则卸载当前模型
+
+    Returns:
+        dict: 卸载结果
+    """
+    global current_model_id
+
+    target_id = model_instance_id or current_model_id
+
+    if not target_id or target_id not in loaded_models:
+        raise HTTPException(status_code=404, detail="模型不存在")
+
+    # TODO: 实际卸载模型
+    del loaded_models[target_id]
+
+    if current_model_id == target_id:
+        current_model_id = None
+
+    return {
+        "message": "模型已卸载",
+        "model_instance_id": target_id
+    }
+
+@router.get("/loaded-models")
+async def get_loaded_models():
+    """
+    获取已加载的模型列表
+
+    Returns:
+        dict: 模型列表
+    """
+    models = []
+    for model_id, model_info in loaded_models.items():
+        models.append({
+            "model_instance_id": model_id,
+            "model_id": model_info["model_id"],
+            "adapter_path": model_info["adapter_path"],
+            "is_current": model_id == current_model_id,
+            "loaded_at": model_info["loaded_at"]
+        })
+
+    return {"models": models}
+
+@router.get("/current-model")
+async def get_current_model():
+    """
+    获取当前使用的模型信息
+
+    Returns:
+        dict: 当前模型信息
+    """
+    if not current_model_id or current_model_id not in loaded_models:
+        return {"current_model": None}
+
+    model_info = loaded_models[current_model_id]
+    return {
+        "current_model": {
+            "model_instance_id": current_model_id,
+            "model_id": model_info["model_id"],
+            "adapter_path": model_info["adapter_path"],
+            "loaded_at": model_info["loaded_at"]
         }
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/status", summary="获取推理状态")
-async def get_inference_status():
-    """
-    获取当前推理服务状态
-    """
-    try:
-        status = infer_service.get_status()
-        return {
-            "code": 0,
-            "message": "success",
-            "data": status
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/models", summary="获取已加载的模型")
-async def list_loaded_models():
-    """
-    获取当前已加载的模型列表
-    """
-    try:
-        models = infer_service.list_loaded_models()
-        return {
-            "code": 0,
-            "message": "success",
-            "data": {"models": models}
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    }

@@ -155,8 +155,8 @@ ast_index_file.py
 
 # Frontend
 node_modules/
-custom_ui/frontend/dist/
-custom_ui/frontend/.vite/
-custom_ui/docker/data/
-custom_ui/docker/models/
-custom_ui/docker/output/
+swift/custom_ui/frontend/dist/
+swift/custom_ui/frontend/.vite/
+swift/custom_ui/docker/data/
+swift/custom_ui/docker/models/
+swift/custom_ui/docker/output/
