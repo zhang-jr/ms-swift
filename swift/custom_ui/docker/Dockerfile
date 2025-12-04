@@ -33,14 +33,13 @@ RUN pip install --no-cache-dir --break-system-packages -r /tmp/backend-requireme
     rm /tmp/backend-requirements.txt
 
 # === 5. 构建前端 ===
-# 先单独复制 package 文件，利用 Docker 缓存
-# 使用 npm ci 替代 npm install 确保依赖一致性
+# 先单独复制 package.json，利用 Docker 缓存
 WORKDIR /tmp/frontend
-COPY swift/custom_ui/frontend/package*.json ./
+COPY swift/custom_ui/frontend/package.json ./
 
-# 配置 npm 镜像并安装依赖（合并到单层）
+# 配置 npm 镜像并安装所有依赖（包括 devDependencies，构建需要）
 RUN npm config set registry https://registry.npmmirror.com && \
-    npm ci --only=production
+    npm install
 
 # 复制前端源码并构建
 COPY swift/custom_ui/frontend /tmp/frontend
