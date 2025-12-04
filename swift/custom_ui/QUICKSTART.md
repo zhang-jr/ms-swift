@@ -78,9 +78,34 @@ CUDA_VISIBLE_DEVICES=0,2,4
 
 **其他可配置项：**
 - `API_PORT`: API 访问端口（默认 8000）
-- `DATA_DIR`: 数据目录路径
-- `MODEL_DIR`: 模型目录路径
-- `OUTPUT_DIR`: 输出目录路径
+- `DATA_DIR`: 数据目录路径（支持相对/绝对路径）
+- `MODEL_DIR`: 模型目录路径（支持相对/绝对路径）
+- `OUTPUT_DIR`: 输出目录路径（支持相对/绝对路径）
+
+**目录配置示例：**
+
+```bash
+# 使用相对路径（默认，相对于 docker-compose.yml）
+DATA_DIR=./data
+MODEL_DIR=./models
+OUTPUT_DIR=./output
+
+# 使用绝对路径（生产环境推荐）
+DATA_DIR=/mnt/data/ms-swift
+MODEL_DIR=/mnt/ssd/models
+OUTPUT_DIR=/mnt/ssd/output
+
+# 挂载 NFS 共享存储
+MODEL_DIR=/nfs/shared/models
+
+# Windows Docker Desktop 路径
+MODEL_DIR=/host_mnt/d/models
+```
+
+**路径规划建议：**
+- `DATA_DIR`: 训练数据集，需要快速读取，建议使用 SSD
+- `MODEL_DIR`: 预训练模型（体积大），可使用大容量 HDD
+- `OUTPUT_DIR`: 训练输出（频繁写入），建议使用 SSD/NVMe
 
 ### 4. 构建和启动服务
 
