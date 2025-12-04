@@ -11,18 +11,18 @@ RUN sed -i 's@//.*archive.ubuntu.com@//mirrors.aliyun.com@g' /etc/apt/sources.li
     sed -i 's@//.*security.ubuntu.com@//mirrors.aliyun.com@g' /etc/apt/sources.list && \
     apt-get update
 
+# 配置 pip 阿里云镜像（提升 Python 包下载速度）
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set install.trusted-host mirrors.aliyun.com
+
 # 安装 Node.js 18.x (用于前端构建，基础镜像未包含)
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# 配置 npm 淘宝镜像（提升 npm 包下载速度）
+# 配置 npm 淘宝镜像（提升 npm 包下载速度，必须在安装 Node.js 之后）
 RUN npm config set registry https://registry.npmmirror.com
-
-# 配置 pip 阿里云镜像（提升 Python 包下载速度）
-RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
-    pip config set install.trusted-host mirrors.aliyun.com
 
 # 安装后端额外依赖 (FastAPI、uvicorn 等 Web 框架，基础镜像未包含)
 COPY swift/custom_ui/backend/requirements.txt /tmp/backend-requirements.txt
