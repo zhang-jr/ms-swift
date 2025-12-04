@@ -71,9 +71,9 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
     except WebSocketDisconnect:
         manager.disconnect(task_id)
 
-# 根路径
-@app.get("/")
-async def root():
+# API 信息端点（不占用根路径）
+@app.get("/api")
+async def api_info():
     return {
         "message": "MS-SWIFT Custom UI API",
         "version": "1.0.0",
@@ -81,20 +81,31 @@ async def root():
     }
 
 # 健康检查
-@app.get("/health")
+@app.get("/api/health")
 async def health():
     return {"status": "healthy"}
 
 # 如果前端已构建，提供静态文件服务
 frontend_build_path = Path(__file__).parent.parent / "frontend" / "dist"
 if frontend_build_path.exists():
+    # 挂载静态资源目录
     app.mount("/assets", StaticFiles(directory=str(frontend_build_path / "assets")), name="assets")
 
+    # Catch-all 路由：所有非 API 请求都返回前端 index.html（支持 SPA 路由）
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
+        # API 请求已经被前面的路由处理，这里只处理前端路由
+        if full_path.startswith("api/"):
+            # 如果是未匹配的 API 路径，返回 404
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="API endpoint not found")
+
+        # 检查是否是静态文件
         file_path = frontend_build_path / full_path
         if file_path.exists() and file_path.is_file():
             return FileResponse(file_path)
+
+        # 否则返回 index.html（SPA 客户端路由）
         return FileResponse(frontend_build_path / "index.html")
 
 if __name__ == "__main__":
