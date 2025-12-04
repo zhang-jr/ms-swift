@@ -6,11 +6,23 @@ FROM modelscope-registry.cn-hangzhou.cr.aliyuncs.com/modelscope-repo/modelscope:
 # 设置工作目录
 WORKDIR /app
 
+# 配置阿里云镜像源（提升下载速度）
+RUN sed -i 's@//.*archive.ubuntu.com@//mirrors.aliyun.com@g' /etc/apt/sources.list && \
+    sed -i 's@//.*security.ubuntu.com@//mirrors.aliyun.com@g' /etc/apt/sources.list && \
+    apt-get update
+
 # 安装 Node.js 18.x (用于前端构建，基础镜像未包含)
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# 配置 npm 淘宝镜像（提升 npm 包下载速度）
+RUN npm config set registry https://registry.npmmirror.com
+
+# 配置 pip 阿里云镜像（提升 Python 包下载速度）
+RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
+    pip config set install.trusted-host mirrors.aliyun.com
 
 # 安装后端额外依赖 (FastAPI、uvicorn 等 Web 框架，基础镜像未包含)
 COPY swift/custom_ui/backend/requirements.txt /tmp/backend-requirements.txt
