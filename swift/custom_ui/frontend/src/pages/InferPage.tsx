@@ -13,7 +13,6 @@ import {
   Divider,
   Row,
   Col,
-  Spin,
   Tag,
 } from 'antd'
 import {
@@ -28,7 +27,6 @@ import { modelAPI } from '@/api/model'
 import type { LoadModelRequest, ChatRequest, ModelInfo } from '@/types'
 
 const { Title, Text, Paragraph } = Typography
-const { TextArea } = Input
 
 const InferPage = () => {
   const [loadForm] = Form.useForm()

@@ -7,7 +7,6 @@ import {
   InputNumber,
   Button,
   Progress,
-  List,
   Typography,
   Space,
   message,
@@ -27,7 +26,6 @@ import { modelAPI } from '@/api/model'
 import type { TrainRequest, TrainStatus, ModelInfo, DatasetInfo } from '@/types'
 
 const { Title, Text, Paragraph } = Typography
-const { TextArea } = Input
 const { Panel } = Collapse
 
 const TrainPage = () => {
