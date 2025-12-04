@@ -13,7 +13,11 @@ import {
   Row,
   Col,
   Collapse,
+  Upload,
+  Alert,
+  Statistic,
 } from 'antd'
+import type { UploadProps } from 'antd'
 import {
   PlayCircleOutlined,
   StopOutlined,
@@ -24,9 +28,13 @@ import {
   SyncOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  InboxOutlined,
+  CloudUploadOutlined,
+  DatabaseOutlined,
 } from '@ant-design/icons'
 import { trainAPI, connectTrainLogs } from '@/api/train'
 import { modelAPI } from '@/api/model'
+import { dataAPI } from '@/api/data'
 import type { TrainRequest, TrainStatus, ModelInfo, DatasetInfo } from '@/types'
 
 const { Title, Text, Paragraph } = Typography
@@ -40,6 +48,8 @@ const TrainPage = () => {
   const [logs, setLogs] = useState<string[]>([])
   const [models, setModels] = useState<ModelInfo[]>([])
   const [datasets, setDatasets] = useState<DatasetInfo[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [datasetCount, setDatasetCount] = useState(0)
 
   // 加载模型和数据集列表
   useEffect(() => {
@@ -54,8 +64,26 @@ const TrainPage = () => {
       ])
       setModels(modelsData)
       setDatasets(datasetsData)
+      setDatasetCount(datasetsData.length)
     } catch (error) {
       message.error('加载模型和数据集列表失败')
+    }
+  }
+
+  // 处理数据集上传
+  const handleUpload: UploadProps['customRequest'] = async ({ file, onSuccess, onError }) => {
+    setUploading(true)
+    try {
+      const response = await dataAPI.uploadDataset(file as File)
+      message.success(`${response.filename} 上传成功！`)
+      // 重新加载数据集列表
+      await loadModelsAndDatasets()
+      onSuccess?.(response)
+    } catch (error: any) {
+      message.error(error.message || '上传失败')
+      onError?.(error)
+    } finally {
+      setUploading(false)
     }
   }
 
@@ -134,7 +162,65 @@ const TrainPage = () => {
 
       <Row gutter={24}>
         <Col xs={24} lg={12}>
-          <Card title="训练配置" bordered={false}>
+          {/* 数据上传区域 */}
+          <Card
+            title={<span><DatabaseOutlined /> 数据集管理</span>}
+            bordered={false}
+            style={{ marginBottom: 16 }}
+            extra={
+              <Space>
+                <Statistic
+                  value={datasetCount}
+                  suffix="个数据集"
+                  valueStyle={{ fontSize: '14px', color: '#667eea' }}
+                />
+              </Space>
+            }
+          >
+            <Upload.Dragger
+              name="file"
+              multiple={false}
+              customRequest={handleUpload}
+              accept=".jsonl,.json,.csv,.tsv,.txt"
+              disabled={uploading}
+              showUploadList={false}
+              style={{
+                background: 'rgba(102, 126, 234, 0.05)',
+                border: '2px dashed rgba(102, 126, 234, 0.3)',
+              }}
+            >
+              <p className="ant-upload-drag-icon">
+                <InboxOutlined style={{ color: '#667eea', fontSize: '48px' }} />
+              </p>
+              <p className="ant-upload-text" style={{ color: 'rgba(255, 255, 255, 0.85)' }}>
+                点击或拖拽文件到此区域上传数据集
+              </p>
+              <p className="ant-upload-hint" style={{ color: 'rgba(255, 255, 255, 0.45)' }}>
+                支持 .jsonl, .json, .csv, .tsv, .txt 格式，单文件最大 1GB
+              </p>
+            </Upload.Dragger>
+
+            {datasetCount === 0 && (
+              <Alert
+                message="暂无数据集"
+                description="请先上传训练数据集，支持常见的文本格式文件"
+                type="info"
+                showIcon
+                icon={<CloudUploadOutlined />}
+                style={{
+                  marginTop: 16,
+                  background: 'rgba(102, 126, 234, 0.1)',
+                  border: '1px solid rgba(102, 126, 234, 0.3)'
+                }}
+              />
+            )}
+          </Card>
+
+          {/* 训练配置 */}
+          <Card
+            title={<span><ThunderboltOutlined /> 训练配置</span>}
+            bordered={false}
+          >
             <Form
               form={form}
               layout="vertical"
@@ -310,30 +396,50 @@ const TrainPage = () => {
         </Col>
 
         <Col xs={24} lg={12}>
+          {/* 训练进度 */}
           <Card
             title={<span><FireOutlined /> 训练进度</span>}
             bordered={false}
             style={{
-              background: 'linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%)'
+              background: 'linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%)',
+              marginBottom: 16
             }}
           >
             {currentTask ? (
-              <Space direction="vertical" style={{ width: '100%' }} size="large">
+              <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                <Row gutter={16}>
+                  <Col span={24}>
+                    <Text strong>任务 ID:</Text> <Text code style={{
+                      background: 'rgba(102, 126, 234, 0.2)',
+                      padding: '2px 8px',
+                      borderRadius: '4px'
+                    }}>{currentTask.task_id}</Text>
+                  </Col>
+                </Row>
+                <Row gutter={16}>
+                  <Col span={12}>
+                    <Statistic
+                      title="训练状态"
+                      value={currentTask.status}
+                      prefix={
+                        currentTask.status === 'running' ? <SyncOutlined spin style={{ color: '#667eea' }} /> :
+                        currentTask.status === 'completed' ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> :
+                        <CloseCircleOutlined style={{ color: '#f5222d' }} />
+                      }
+                      valueStyle={{ fontSize: '16px' }}
+                    />
+                  </Col>
+                  <Col span={12}>
+                    <Statistic
+                      title="当前轮次"
+                      value={currentTask.current_epoch}
+                      suffix={`/ ${currentTask.total_epochs}`}
+                      valueStyle={{ fontSize: '16px', color: '#667eea' }}
+                    />
+                  </Col>
+                </Row>
                 <div>
-                  <Text strong>任务 ID:</Text> <Text code style={{
-                    background: 'rgba(102, 126, 234, 0.2)',
-                    padding: '2px 8px',
-                    borderRadius: '4px'
-                  }}>{currentTask.task_id}</Text>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Text strong>状态:</Text>
-                  {currentTask.status === 'running' && <SyncOutlined spin style={{ color: '#667eea' }} />}
-                  {currentTask.status === 'completed' && <CheckCircleOutlined style={{ color: '#52c41a' }} />}
-                  {currentTask.status === 'failed' && <CloseCircleOutlined style={{ color: '#f5222d' }} />}
-                  <Text>{currentTask.status}</Text>
-                </div>
-                <div>
+                  <Text type="secondary" style={{ fontSize: '12px' }}>训练进度</Text>
                   <Progress
                     percent={Math.round(currentTask.progress)}
                     strokeColor={{
@@ -341,44 +447,47 @@ const TrainPage = () => {
                       '100%': '#764ba2',
                     }}
                     trailColor="rgba(255, 255, 255, 0.1)"
+                    strokeWidth={12}
                   />
                 </div>
-                <div>
-                  <Text strong>当前轮次:</Text> {currentTask.current_epoch} / {currentTask.total_epochs}
-                </div>
                 {currentTask.loss !== null && (
-                  <div>
-                    <Text strong>Loss:</Text> <Text style={{
-                      color: '#667eea',
-                      fontSize: '16px',
-                      fontWeight: 'bold',
-                      marginLeft: '8px'
-                    }}>{currentTask.loss.toFixed(4)}</Text>
-                  </div>
+                  <Row gutter={16}>
+                    <Col span={24}>
+                      <Statistic
+                        title="Loss 值"
+                        value={currentTask.loss.toFixed(4)}
+                        valueStyle={{ fontSize: '20px', color: '#667eea', fontWeight: 'bold' }}
+                      />
+                    </Col>
+                  </Row>
                 )}
               </Space>
             ) : (
-              <Text type="secondary">暂无训练任务</Text>
+              <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                <FireOutlined style={{ fontSize: '48px', color: 'rgba(255, 255, 255, 0.2)', marginBottom: '16px' }} />
+                <Text type="secondary" style={{ display: 'block' }}>暂无训练任务</Text>
+                <Text type="secondary" style={{ fontSize: '12px' }}>配置参数后点击"开始训练"启动任务</Text>
+              </div>
             )}
           </Card>
 
+          {/* 实时日志 */}
           <Card
             title={<span style={{ fontFamily: 'monospace' }}>{'>'} 实时日志</span>}
             bordered={false}
             style={{
-              marginTop: 24,
               background: 'linear-gradient(135deg, rgba(15, 12, 41, 0.6) 0%, rgba(36, 36, 62, 0.6) 100%)'
             }}
           >
             <div
               style={{
-                height: '400px',
+                height: '350px',
                 overflow: 'auto',
                 background: 'linear-gradient(180deg, #0a0e27 0%, #1a1a2e 100%)',
                 padding: '16px',
                 borderRadius: '8px',
                 fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-                fontSize: '13px',
+                fontSize: '12px',
                 border: '1px solid rgba(102, 126, 234, 0.3)',
                 boxShadow: 'inset 0 2px 8px rgba(0, 0, 0, 0.6)',
               }}
@@ -389,9 +498,9 @@ const TrainPage = () => {
                     key={index}
                     style={{
                       color: '#0f0',
-                      marginBottom: '4px',
+                      marginBottom: '2px',
                       textShadow: '0 0 5px rgba(0, 255, 0, 0.5)',
-                      lineHeight: '1.6'
+                      lineHeight: '1.5'
                     }}
                   >
                     <span style={{ color: '#667eea', marginRight: '8px' }}>[{index + 1}]</span>
@@ -399,9 +508,14 @@ const TrainPage = () => {
                   </div>
                 ))
               ) : (
-                <Text type="secondary" style={{ fontFamily: 'monospace' }}>
-                  {'>'} 等待日志输出...
-                </Text>
+                <div style={{ textAlign: 'center', paddingTop: '100px' }}>
+                  <Text type="secondary" style={{ fontFamily: 'monospace', display: 'block', marginBottom: '8px' }}>
+                    {'>'} 等待日志输出...
+                  </Text>
+                  <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: '11px' }}>
+                    训练开始后将显示实时日志
+                  </Text>
+                </div>
               )}
             </div>
           </Card>
