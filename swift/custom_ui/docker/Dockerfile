@@ -16,15 +16,14 @@ RUN sed -i "s/archive.ubuntu.com/mirrors.aliyun.com/g; s/security.ubuntu.com/mir
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
     pip config set install.trusted-host mirrors.aliyun.com
 
-# === 3. 安装 Node.js 18.x 并验证 ===
-# 只安装 nodejs（已包含 npm），避免单独安装 npm 导致冲突
-# 添加版本验证，确保安装成功；清理 apt 缓存
-RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
+# === 3. 安装 Node.js 18.x（使用中国镜像）===
+# NodeSource 在国内不稳定，改用淘宝 Node.js 镜像直接下载二进制包
+ENV NODE_VERSION=18.20.5
+RUN curl -fsSL https://npmmirror.com/mirrors/node/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz -o node.tar.xz && \
+    tar -xJf node.tar.xz -C /usr/local --strip-components=1 && \
+    rm node.tar.xz && \
     node --version && \
-    npm --version && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    npm --version
 
 # === 4. 安装后端依赖 ===
 # --break-system-packages 在 Docker 环境中可接受，但需备注
