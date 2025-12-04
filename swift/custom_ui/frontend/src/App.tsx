@@ -13,7 +13,30 @@ function App() {
       theme={{
         algorithm: theme.darkAlgorithm,
         token: {
-          colorPrimary: '#1890ff',
+          colorPrimary: '#667eea',
+          colorSuccess: '#52c41a',
+          colorWarning: '#faad14',
+          colorError: '#f5222d',
+          colorInfo: '#667eea',
+          borderRadius: 8,
+          fontSize: 14,
+          colorBgContainer: 'rgba(255, 255, 255, 0.08)',
+          colorBorder: 'rgba(255, 255, 255, 0.15)',
+        },
+        components: {
+          Card: {
+            colorBgContainer: 'rgba(255, 255, 255, 0.06)',
+            boxShadowTertiary: '0 6px 16px 0 rgba(0, 0, 0, 0.32)',
+          },
+          Button: {
+            primaryShadow: '0 2px 0 rgba(102, 126, 234, 0.1)',
+          },
+          Input: {
+            colorBgContainer: 'rgba(0, 0, 0, 0.25)',
+          },
+          Select: {
+            colorBgContainer: 'rgba(0, 0, 0, 0.25)',
+          },
         },
       }}
     >

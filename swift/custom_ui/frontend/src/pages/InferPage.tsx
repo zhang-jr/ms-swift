@@ -20,7 +20,9 @@ import {
   ClearOutlined,
   UploadOutlined,
   DownloadOutlined,
-  MessageOutlined,
+  ApiOutlined,
+  RobotOutlined,
+  UserOutlined,
 } from '@ant-design/icons'
 import { inferAPI } from '@/api/infer'
 import { modelAPI } from '@/api/model'
@@ -141,11 +143,11 @@ const InferPage = () => {
 
   return (
     <div>
-      <Title level={2}>
-        <MessageOutlined /> 模型推理
+      <Title level={2} style={{ color: '#fff', display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <ApiOutlined style={{ color: '#667eea' }} /> 模型推理
       </Title>
-      <Paragraph type="secondary">
-        加载模型并进行对话推理
+      <Paragraph type="secondary" style={{ fontSize: '15px', marginBottom: '24px' }}>
+        <RobotOutlined /> 加载模型并进行智能对话推理
       </Paragraph>
 
       <Row gutter={24}>
@@ -293,30 +295,36 @@ const InferPage = () => {
                   renderItem={([query, response], index) => (
                     <div key={index} style={{ marginBottom: '16px' }}>
                       {/* 用户消息 */}
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '8px', alignItems: 'flex-start', gap: '8px' }}>
                         <div
                           style={{
                             maxWidth: '70%',
                             padding: '12px 16px',
-                            background: '#1890ff',
+                            background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
                             color: 'white',
-                            borderRadius: '12px',
+                            borderRadius: '16px 16px 4px 16px',
                             wordWrap: 'break-word',
+                            boxShadow: '0 4px 12px rgba(102, 126, 234, 0.4)',
                           }}
                         >
                           {query}
                         </div>
+                        <UserOutlined style={{ fontSize: '24px', color: '#667eea', marginTop: '8px' }} />
                       </div>
                       {/* AI 回复 */}
-                      <div style={{ display: 'flex', justifyContent: 'flex-start' }}>
+                      <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'flex-start', gap: '8px' }}>
+                        <RobotOutlined style={{ fontSize: '24px', color: '#52c41a', marginTop: '8px' }} />
                         <div
                           style={{
                             maxWidth: '70%',
                             padding: '12px 16px',
-                            background: 'white',
-                            borderRadius: '12px',
+                            background: 'rgba(255, 255, 255, 0.1)',
+                            border: '1px solid rgba(255, 255, 255, 0.2)',
+                            color: 'rgba(255, 255, 255, 0.9)',
+                            borderRadius: '16px 16px 16px 4px',
                             wordWrap: 'break-word',
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+                            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)',
+                            backdropFilter: 'blur(10px)',
                           }}
                         >
                           {response}

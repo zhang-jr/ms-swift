@@ -5,8 +5,15 @@
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
+from pathlib import Path
+import os
+import json
 
 router = APIRouter()
+
+# 从环境变量获取目录路径
+MODEL_DIR = Path(os.getenv("MODEL_DIR", "/app/models"))
+DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
 
 # 响应模型
 class ModelInfo(BaseModel):
@@ -24,72 +31,137 @@ class DatasetInfo(BaseModel):
     num_samples: Optional[int] = None
     tags: List[str] = []
 
-# 模拟数据 - 实际应从 ModelScope 获取
-MOCK_MODELS = [
-    {
-        "model_id": "qwen/Qwen2.5-7B-Instruct",
-        "model_name": "Qwen2.5 7B Instruct",
-        "model_type": "qwen2_5-7b-instruct",
-        "size": "7B",
-        "description": "Qwen2.5 7B 指令微调模型",
-        "tags": ["chat", "instruction"]
-    },
-    {
-        "model_id": "qwen/Qwen2.5-14B-Instruct",
-        "model_name": "Qwen2.5 14B Instruct",
-        "model_type": "qwen2_5-14b-instruct",
-        "size": "14B",
-        "description": "Qwen2.5 14B 指令微调模型",
-        "tags": ["chat", "instruction"]
-    },
-    {
-        "model_id": "ZhipuAI/chatglm3-6b",
-        "model_name": "ChatGLM3 6B",
-        "model_type": "chatglm3-6b",
-        "size": "6B",
-        "description": "ChatGLM3 对话模型",
-        "tags": ["chat", "chinese"]
-    },
-    {
-        "model_id": "internlm/internlm2-chat-7b",
-        "model_name": "InternLM2 Chat 7B",
-        "model_type": "internlm2-chat-7b",
-        "size": "7B",
-        "description": "书生·浦语 2.0 对话模型",
-        "tags": ["chat", "chinese"]
-    },
-]
+# 辅助函数：扫描模型目录
+def scan_models() -> List[Dict[str, Any]]:
+    """
+    扫描 MODEL_DIR 目录，返回可用的模型列表
 
-MOCK_DATASETS = [
-    {
-        "dataset_id": "alpaca-zh",
-        "dataset_name": "Alpaca 中文数据集",
-        "description": "中文指令微调数据集",
-        "num_samples": 50000,
-        "tags": ["instruction", "chinese"]
-    },
-    {
-        "dataset_id": "belle-500k",
-        "dataset_name": "BELLE 500K",
-        "description": "BELLE 中文指令数据集",
-        "num_samples": 500000,
-        "tags": ["instruction", "chinese"]
-    },
-    {
-        "dataset_id": "alpaca-en",
-        "dataset_name": "Alpaca English",
-        "description": "英文指令微调数据集",
-        "num_samples": 52000,
-        "tags": ["instruction", "english"]
-    },
-    {
-        "dataset_id": "advertise-gen",
-        "dataset_name": "广告生成数据集",
-        "description": "中文广告文案生成数据集",
-        "num_samples": 10000,
-        "tags": ["generation", "chinese"]
-    },
-]
+    目录结构示例：
+    /app/models/
+        ├── qwen-7b/          # 模型目录（包含 config.json, pytorch_model.bin 等）
+        ├── chatglm3-6b/
+        └── llama2-13b/
+
+    Returns:
+        List[Dict]: 模型信息列表
+    """
+    models = []
+
+    if not MODEL_DIR.exists():
+        MODEL_DIR.mkdir(parents=True, exist_ok=True)
+        return models
+
+    # 遍历一级子目录
+    for model_path in MODEL_DIR.iterdir():
+        if not model_path.is_dir():
+            continue
+
+        # 检查是否是有效的模型目录（至少包含 config.json）
+        config_file = model_path / "config.json"
+        if not config_file.exists():
+            continue
+
+        # 读取模型配置
+        model_name = model_path.name
+        model_type = "unknown"
+        size = None
+
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+                # 尝试从配置中提取模型类型
+                if "model_type" in config:
+                    model_type = config["model_type"]
+                elif "architectures" in config and config["architectures"]:
+                    model_type = config["architectures"][0]
+        except Exception:
+            pass
+
+        # 计算模型大小（目录大小）
+        try:
+            total_size = sum(f.stat().st_size for f in model_path.rglob('*') if f.is_file())
+            size_gb = total_size / (1024 ** 3)
+            if size_gb >= 1:
+                size = f"{size_gb:.1f}GB"
+            else:
+                size = f"{total_size / (1024 ** 2):.0f}MB"
+        except Exception:
+            pass
+
+        models.append({
+            "model_id": str(model_path),
+            "model_name": model_name,
+            "model_type": model_type,
+            "size": size,
+            "description": f"本地模型: {model_name}",
+            "tags": ["local"]
+        })
+
+    return models
+
+
+# 辅助函数：扫描数据集目录
+def scan_datasets() -> List[Dict[str, Any]]:
+    """
+    扫描 DATA_DIR 目录，返回可用的数据集列表
+
+    支持的文件格式：.jsonl, .json, .csv, .tsv, .txt
+
+    Returns:
+        List[Dict]: 数据集信息列表
+    """
+    datasets = []
+
+    if not DATA_DIR.exists():
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        return datasets
+
+    # 支持的数据集文件格式
+    supported_extensions = {'.jsonl', '.json', '.csv', '.tsv', '.txt'}
+
+    # 遍历数据目录中的文件
+    for file_path in DATA_DIR.iterdir():
+        if not file_path.is_file():
+            continue
+
+        if file_path.suffix.lower() not in supported_extensions:
+            continue
+
+        # 获取文件信息
+        file_name = file_path.name
+        file_size = file_path.stat().st_size
+
+        # 尝试统计样本数量（仅对 JSONL 和 CSV 文件）
+        num_samples = None
+        if file_path.suffix.lower() in {'.jsonl', '.csv'}:
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    num_samples = sum(1 for _ in f)
+                # CSV 文件减去表头
+                if file_path.suffix.lower() == '.csv' and num_samples > 0:
+                    num_samples -= 1
+            except Exception:
+                pass
+
+        # 格式化文件大小
+        if file_size >= 1024 ** 3:
+            size_str = f"{file_size / (1024 ** 3):.2f}GB"
+        elif file_size >= 1024 ** 2:
+            size_str = f"{file_size / (1024 ** 2):.2f}MB"
+        elif file_size >= 1024:
+            size_str = f"{file_size / 1024:.2f}KB"
+        else:
+            size_str = f"{file_size}B"
+
+        datasets.append({
+            "dataset_id": file_name,
+            "dataset_name": file_name,
+            "description": f"文件大小: {size_str}",
+            "num_samples": num_samples,
+            "tags": [file_path.suffix.lower().replace('.', '')]
+        })
+
+    return datasets
 
 @router.get("/models", response_model=List[ModelInfo])
 async def get_models(
@@ -98,7 +170,7 @@ async def get_models(
     tag: Optional[str] = None
 ):
     """
-    获取可用模型列表
+    获取可用模型列表（从 /app/models 目录扫描）
 
     Args:
         search: 搜索关键词
@@ -108,11 +180,8 @@ async def get_models(
     Returns:
         List[ModelInfo]: 模型列表
     """
-    # TODO: 从 ModelScope 实际获取模型列表
-    # from swift.utils import get_model_list
-    # models = get_model_list()
-
-    models = MOCK_MODELS.copy()
+    # 从实际目录扫描模型
+    models = scan_models()
 
     # 应用过滤
     if search:
@@ -127,20 +196,20 @@ async def get_models(
 
     return [ModelInfo(**m) for m in models]
 
-@router.get("/models/{model_id}")
+@router.get("/models/{model_id:path}")
 async def get_model_detail(model_id: str):
     """
     获取模型详细信息
 
     Args:
-        model_id: 模型 ID
+        model_id: 模型 ID（可能包含路径）
 
     Returns:
         ModelInfo: 模型信息
     """
-    # 在路径中的斜杠会被编码，这里处理一下
-    for model in MOCK_MODELS:
-        if model["model_id"] == model_id or model["model_id"].replace("/", "_") == model_id:
+    models = scan_models()
+    for model in models:
+        if model["model_id"] == model_id or Path(model["model_id"]).name == model_id:
             return ModelInfo(**model)
 
     raise HTTPException(status_code=404, detail="模型不存在")
@@ -151,7 +220,7 @@ async def get_datasets(
     tag: Optional[str] = None
 ):
     """
-    获取可用数据集列表
+    获取可用数据集列表（从 /app/data 目录扫描）
 
     Args:
         search: 搜索关键词
@@ -160,11 +229,8 @@ async def get_datasets(
     Returns:
         List[DatasetInfo]: 数据集列表
     """
-    # TODO: 从 ModelScope 实际获取数据集列表
-    # from swift.utils import get_dataset_list
-    # datasets = get_dataset_list()
-
-    datasets = MOCK_DATASETS.copy()
+    # 从实际目录扫描数据集
+    datasets = scan_datasets()
 
     # 应用过滤
     if search:
@@ -182,12 +248,13 @@ async def get_dataset_detail(dataset_id: str):
     获取数据集详细信息
 
     Args:
-        dataset_id: 数据集 ID
+        dataset_id: 数据集 ID（文件名）
 
     Returns:
         DatasetInfo: 数据集信息
     """
-    for dataset in MOCK_DATASETS:
+    datasets = scan_datasets()
+    for dataset in datasets:
         if dataset["dataset_id"] == dataset_id:
             return DatasetInfo(**dataset)
 
@@ -201,7 +268,7 @@ async def get_model_types():
     Returns:
         dict: 模型类型列表
     """
-    # TODO: 从 swift 获取实际支持的模型类型
-    model_types = list(set(m["model_type"] for m in MOCK_MODELS))
+    models = scan_models()
+    model_types = list(set(m["model_type"] for m in models if m["model_type"] != "unknown"))
 
     return {"model_types": model_types}

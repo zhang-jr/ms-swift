@@ -18,7 +18,12 @@ import {
   PlayCircleOutlined,
   StopOutlined,
   ReloadOutlined,
-  ExperimentOutlined,
+  ThunderboltOutlined,
+  RocketOutlined,
+  FireOutlined,
+  SyncOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
 } from '@ant-design/icons'
 import { trainAPI, connectTrainLogs } from '@/api/train'
 import { modelAPI } from '@/api/model'
@@ -120,11 +125,11 @@ const TrainPage = () => {
 
   return (
     <div>
-      <Title level={2}>
-        <ExperimentOutlined /> 模型训练
+      <Title level={2} style={{ color: '#fff', display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <ThunderboltOutlined style={{ color: '#667eea' }} /> 模型训练
       </Title>
-      <Paragraph type="secondary">
-        配置训练参数并启动模型微调任务
+      <Paragraph type="secondary" style={{ fontSize: '15px', marginBottom: '24px' }}>
+        <RocketOutlined /> 配置训练参数并启动模型微调任务
       </Paragraph>
 
       <Row gutter={24}>
@@ -305,24 +310,50 @@ const TrainPage = () => {
         </Col>
 
         <Col xs={24} lg={12}>
-          <Card title="训练进度" bordered={false}>
+          <Card
+            title={<span><FireOutlined /> 训练进度</span>}
+            bordered={false}
+            style={{
+              background: 'linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%)'
+            }}
+          >
             {currentTask ? (
               <Space direction="vertical" style={{ width: '100%' }} size="large">
                 <div>
-                  <Text strong>任务 ID:</Text> <Text code>{currentTask.task_id}</Text>
+                  <Text strong>任务 ID:</Text> <Text code style={{
+                    background: 'rgba(102, 126, 234, 0.2)',
+                    padding: '2px 8px',
+                    borderRadius: '4px'
+                  }}>{currentTask.task_id}</Text>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Text strong>状态:</Text>
+                  {currentTask.status === 'running' && <SyncOutlined spin style={{ color: '#667eea' }} />}
+                  {currentTask.status === 'completed' && <CheckCircleOutlined style={{ color: '#52c41a' }} />}
+                  {currentTask.status === 'failed' && <CloseCircleOutlined style={{ color: '#f5222d' }} />}
+                  <Text>{currentTask.status}</Text>
                 </div>
                 <div>
-                  <Text strong>状态:</Text> <Text>{currentTask.status}</Text>
-                </div>
-                <div>
-                  <Progress percent={Math.round(currentTask.progress)} />
+                  <Progress
+                    percent={Math.round(currentTask.progress)}
+                    strokeColor={{
+                      '0%': '#667eea',
+                      '100%': '#764ba2',
+                    }}
+                    trailColor="rgba(255, 255, 255, 0.1)"
+                  />
                 </div>
                 <div>
                   <Text strong>当前轮次:</Text> {currentTask.current_epoch} / {currentTask.total_epochs}
                 </div>
                 {currentTask.loss !== null && (
                   <div>
-                    <Text strong>Loss:</Text> {currentTask.loss.toFixed(4)}
+                    <Text strong>Loss:</Text> <Text style={{
+                      color: '#667eea',
+                      fontSize: '16px',
+                      fontWeight: 'bold',
+                      marginLeft: '8px'
+                    }}>{currentTask.loss.toFixed(4)}</Text>
                   </div>
                 )}
               </Space>
@@ -331,26 +362,46 @@ const TrainPage = () => {
             )}
           </Card>
 
-          <Card title="实时日志" bordered={false} style={{ marginTop: 24 }}>
+          <Card
+            title={<span style={{ fontFamily: 'monospace' }}>{'>'} 实时日志</span>}
+            bordered={false}
+            style={{
+              marginTop: 24,
+              background: 'linear-gradient(135deg, rgba(15, 12, 41, 0.6) 0%, rgba(36, 36, 62, 0.6) 100%)'
+            }}
+          >
             <div
               style={{
                 height: '400px',
                 overflow: 'auto',
-                background: '#1e1e1e',
-                padding: '12px',
-                borderRadius: '4px',
-                fontFamily: 'monospace',
-                fontSize: '12px',
+                background: 'linear-gradient(180deg, #0a0e27 0%, #1a1a2e 100%)',
+                padding: '16px',
+                borderRadius: '8px',
+                fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+                fontSize: '13px',
+                border: '1px solid rgba(102, 126, 234, 0.3)',
+                boxShadow: 'inset 0 2px 8px rgba(0, 0, 0, 0.6)',
               }}
             >
               {logs.length > 0 ? (
                 logs.map((log, index) => (
-                  <div key={index} style={{ color: '#d4d4d4', marginBottom: '4px' }}>
+                  <div
+                    key={index}
+                    style={{
+                      color: '#0f0',
+                      marginBottom: '4px',
+                      textShadow: '0 0 5px rgba(0, 255, 0, 0.5)',
+                      lineHeight: '1.6'
+                    }}
+                  >
+                    <span style={{ color: '#667eea', marginRight: '8px' }}>[{index + 1}]</span>
                     {log}
                   </div>
                 ))
               ) : (
-                <Text type="secondary">等待日志...</Text>
+                <Text type="secondary" style={{ fontFamily: 'monospace' }}>
+                  {'>'} 等待日志输出...
+                </Text>
               )}
             </div>
           </Card>

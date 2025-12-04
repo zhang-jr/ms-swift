@@ -187,11 +187,11 @@ const DeployPage = () => {
 
   return (
     <div>
-      <Title level={2}>
-        <CloudServerOutlined /> 模型部署
+      <Title level={2} style={{ color: '#fff', display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <RocketOutlined style={{ color: '#667eea' }} /> 模型部署
       </Title>
-      <Paragraph type="secondary">
-        将模型部署为 API 服务，支持 OpenAI 兼容接口
+      <Paragraph type="secondary" style={{ fontSize: '15px', marginBottom: '24px' }}>
+        <CloudServerOutlined /> 将模型部署为高性能 API 服务，支持 OpenAI 兼容接口
       </Paragraph>
 
       <Row gutter={24}>
