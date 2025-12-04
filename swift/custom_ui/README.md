@@ -41,7 +41,7 @@
 - **[QUICKSTART.md](./QUICKSTART.md)** - 快速部署和启动指南
 - **[USER_GUIDE.md](./USER_GUIDE.md)** - 完整的用户使用指南（数据上传、训练、推理、部署）
 - **[PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md)** - 项目架构和技术总结
-- **[CALUDE.md](./CALUDE.md)** - 开发任务和进度
+- **[../../CLAUDE.md](../../CLAUDE.md)** - 开发任务和进度（项目根目录）
 
 ## 快速开始
 

@@ -92,8 +92,9 @@
 ✅ **完整文档体系**
 - `README.md`: 项目介绍和功能说明
 - `QUICKSTART.md`: 快速开始指南
+- `USER_GUIDE.md`: 用户使用指南
 - `PROJECT_SUMMARY.md`: 项目总结 (本文档)
-- `CALUDE.md`: 开发指南 (已有)
+- `../../CLAUDE.md`: 开发指南 (项目根目录)
 
 ## 技术架构
 
