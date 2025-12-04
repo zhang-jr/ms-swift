@@ -15,11 +15,13 @@ RUN sed -i 's@//.*archive.ubuntu.com@//mirrors.aliyun.com@g' /etc/apt/sources.li
 RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/ && \
     pip config set install.trusted-host mirrors.aliyun.com
 
-# 安装 Node.js 18.x (用于前端构建，基础镜像未包含)
+# 安装 Node.js 18.x 和 npm (用于前端构建，基础镜像未包含)
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - && \
-    apt-get install -y nodejs && \
+    apt-get install -y nodejs npm && \
     apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    node --version && \
+    npm --version
 
 # 配置 npm 淘宝镜像（提升 npm 包下载速度，必须在安装 Node.js 之后）
 RUN npm config set registry https://registry.npmmirror.com
