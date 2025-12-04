@@ -40,11 +40,51 @@ cd ms-swift
 git checkout feature/custom-webui
 ```
 
-### 3. 构建和启动服务
+### 3. 配置 GPU 和环境变量
 
 ```bash
 cd swift/custom_ui/docker
 
+# 复制环境变量配置模板
+cp .env.example .env
+
+# 编辑 .env 文件配置 GPU
+nano .env  # 或使用其他编辑器
+```
+
+**常见 GPU 配置示例：**
+
+```bash
+# 单卡场景（默认）
+GPU_COUNT=1
+CUDA_VISIBLE_DEVICES=0
+
+# 使用第2块GPU
+GPU_COUNT=1
+CUDA_VISIBLE_DEVICES=1
+
+# 使用2块GPU
+GPU_COUNT=2
+CUDA_VISIBLE_DEVICES=0,1
+
+# 使用所有GPU
+GPU_COUNT=all
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+
+# 使用指定的非连续GPU
+GPU_COUNT=3
+CUDA_VISIBLE_DEVICES=0,2,4
+```
+
+**其他可配置项：**
+- `API_PORT`: API 访问端口（默认 8000）
+- `DATA_DIR`: 数据目录路径
+- `MODEL_DIR`: 模型目录路径
+- `OUTPUT_DIR`: 输出目录路径
+
+### 4. 构建和启动服务
+
+```bash
 # 构建镜像 (首次运行或代码更新后)
 docker-compose build
 
@@ -55,13 +95,13 @@ docker-compose up -d
 docker-compose logs -f ms-swift-custom-ui
 ```
 
-### 4. 访问服务
+### 5. 访问服务
 
 打开浏览器访问:
 - 前端界面: http://localhost:8000
 - API 文档: http://localhost:8000/docs
 
-### 5. 停止服务
+### 6. 停止服务
 
 ```bash
 docker-compose down

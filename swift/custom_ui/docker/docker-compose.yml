@@ -7,20 +7,19 @@ services:
       dockerfile: swift/custom_ui/docker/Dockerfile
     container_name: ms-swift-ui
     ports:
-      - "8000:8000"   # API 和前端访问端口
-      - "3000:3000"   # 前端开发端口(可选)
+      - "${API_PORT:-8000}:8000"   # API 和前端访问端口
     volumes:
       # 挂载数据目录
-      - ./data:/app/data
+      - ${DATA_DIR:-./data}:/app/data
       # 挂载模型目录
-      - ./models:/app/models
+      - ${MODEL_DIR:-./models}:/app/models
       # 挂载输出目录
-      - ./output:/app/output
+      - ${OUTPUT_DIR:-./output}:/app/output
       # 挂载配置文件(可选)
       # - ./config:/app/config
     environment:
-      # CUDA 设备
-      - CUDA_VISIBLE_DEVICES=0
+      # CUDA 设备配置（支持 0, 0,1, 0,1,2,3 等）
+      - CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-0}
       # Python 环境变量
       - PYTHONUNBUFFERED=1
       # ModelScope 缓存目录
@@ -32,7 +31,8 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1  # 使用 1 个 GPU，可根据需要调整
+              # 支持: 1, 2, all 等
+              count: ${GPU_COUNT:-1}
               capabilities: [gpu]
     restart: unless-stopped
     stdin_open: true
