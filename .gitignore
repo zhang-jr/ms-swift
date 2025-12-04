@@ -160,3 +160,7 @@ swift/custom_ui/frontend/.vite/
 swift/custom_ui/docker/data/
 swift/custom_ui/docker/models/
 swift/custom_ui/docker/output/
+
+# Temporary files
+*_tmp.*
+*.tmp
