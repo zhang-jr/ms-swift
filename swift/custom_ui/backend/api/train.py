@@ -14,6 +14,7 @@ router = APIRouter()
 class TrainRequest(BaseModel):
     model_id: str
     model_type: str = "qwen-7b-chat"
+    # 数据集：可以是上传的文件名（自动从 /app/data 读取）或完整路径
     dataset: str
     train_type: str = "lora"
 

@@ -1,15 +1,27 @@
 # MS-SWIFT Custom Web UI
 
-基于 MS-SWIFT 的自定义 Web UI，提供用户友好的模型训练、推理和部署界面。
+基于 MS-SWIFT 的自定义 Web UI，为数据工程师提供零代码的模型训练、推理和部署界面。
+
+## 设计理念
+
+本系统专为**数据工程师**设计，无需了解深度学习算法细节，通过浏览器完成：
+- ✅ 上传训练数据（CSV, JSONL, JSON 等格式）
+- ✅ 可视化配置训练参数（无需编写代码）
+- ✅ 实时监控训练进度
+- ✅ 一键部署模型为 API 服务
+
+所有操作在 Docker 容器内运行，数据通过 Volume 自动同步，可复用相同镜像在多台机器或云端部署。
 
 ## 特性
 
+- **数据管理**: 浏览器上传数据集，支持预览、下载、删除（最大 1GB）
 - **模型训练**: 可视化配置训练参数，实时查看训练进度和日志
 - **模型推理**: 加载模型进行对话式推理，支持自定义参数
 - **模型部署**: 一键部署模型为 API 服务，支持 OpenAI 兼容接口
 - **实时日志**: 通过 WebSocket 实时推送训练日志
 - **现代化界面**: 基于 React + Ant Design 的响应式界面
-- **Docker 部署**: 完整的 Docker 容器化支持
+- **Docker 部署**: 完整的 Docker 容器化支持，数据自动同步
+- **灵活配置**: GPU、端口、挂载目录均可通过环境变量配置
 
 ## 技术栈
 
@@ -23,6 +35,13 @@
 - **TypeScript**: 类型安全
 - **Ant Design 5**: 企业级 UI 组件库
 - **Vite**: 极速开发服务器和构建工具
+
+## 文档导航
+
+- **[QUICKSTART.md](./QUICKSTART.md)** - 快速部署和启动指南
+- **[USER_GUIDE.md](./USER_GUIDE.md)** - 完整的用户使用指南（数据上传、训练、推理、部署）
+- **[PROJECT_SUMMARY.md](./PROJECT_SUMMARY.md)** - 项目架构和技术总结
+- **[CALUDE.md](./CALUDE.md)** - 开发任务和进度
 
 ## 快速开始
 
@@ -81,6 +100,7 @@ npm run dev
 custom_ui/
 ├── backend/                # FastAPI 后端
 │   ├── api/               # API 路由
+│   │   ├── data.py        # 数据管理 API (NEW!)
 │   │   ├── train.py       # 训练 API
 │   │   ├── infer.py       # 推理 API
 │   │   ├── deploy.py      # 部署 API
@@ -103,9 +123,11 @@ custom_ui/
 ├── docker/                # Docker 配置
 │   ├── Dockerfile
 │   ├── docker-compose.yml
+│   ├── .env.example       # 环境变量配置模板
 │   └── start.sh
-├── README.md
-└── QUICKSTART.md
+├── README.md              # 项目介绍
+├── QUICKSTART.md          # 快速开始指南
+└── USER_GUIDE.md          # 用户使用指南 (NEW!)
 ```
 
 ## API 文档
@@ -117,10 +139,20 @@ custom_ui/
 
 ### 主要 API 端点
 
+#### 数据管理 (NEW!)
+- `POST /api/data/upload` - 上传数据集
+- `GET /api/data/list` - 获取数据集列表
+- `GET /api/data/preview/{filename}` - 预览数据集
+- `GET /api/data/info/{filename}` - 获取数据集信息
+- `GET /api/data/download/{filename}` - 下载数据集
+- `DELETE /api/data/delete/{filename}` - 删除数据集
+
 #### 训练相关
 - `POST /api/train/start` - 启动训练任务
 - `GET /api/train/status/{task_id}` - 获取训练状态
 - `POST /api/train/stop/{task_id}` - 停止训练
+- `GET /api/train/list` - 获取所有训练任务
+- `DELETE /api/train/delete/{task_id}` - 删除训练任务
 - `WS /ws/logs/{task_id}` - 实时训练日志 (WebSocket)
 
 #### 推理相关
@@ -137,18 +169,42 @@ custom_ui/
 - `GET /api/model/models` - 获取模型列表
 - `GET /api/model/datasets` - 获取数据集列表
 
+## 完整工作流程
+
+### 典型使用场景
+```
+数据工程师 → 上传数据 → 配置参数 → 启动训练 → 监控进度 → 模型推理 → 部署服务
+```
+
+所有操作通过浏览器完成，数据自动同步到 Docker 容器，无需手动配置路径。
+
+**详细使用指南请参考**: [USER_GUIDE.md](./USER_GUIDE.md)
+
 ## 功能说明
 
-### 1. 模型训练
+### 1. 数据管理 (NEW!)
+
+在数据管理页面可以:
+- **上传数据集**: 支持 CSV, JSONL, JSON, TSV, TXT 格式（最大 1GB）
+- **预览数据**: 表格形式预览前 N 行，自动识别列名
+- **数据统计**: 显示文件大小、行数、上传时间
+- **下载/删除**: 管理已上传的数据集
+
+上传的数据自动保存到 Docker volume `/app/data`，训练时直接引用文件名即可。
+
+### 2. 模型训练
 
 在训练页面可以:
-- 选择预训练模型和数据集
-- 配置 LoRA 参数 (rank, alpha, dropout)
-- 设置训练超参数 (学习率, batch size, epochs 等)
-- 实时查看训练进度和 loss
-- 通过 WebSocket 查看实时训练日志
+- **选择数据集**: 从已上传的数据集中选择（或使用绝对路径）
+- **选择模型**: 选择预训练模型（如 qwen-7b-chat）
+- **配置 LoRA 参数**: rank, alpha, dropout
+- **设置训练参数**: 学习率, batch size, epochs 等
+- **实时监控**: 查看训练进度、loss 曲线
+- **实时日志**: 通过 WebSocket 查看训练日志
 
-### 2. 模型推理
+训练输出自动保存到 `/app/output/{task_id}/`，可通过宿主机访问。
+
+### 3. 模型推理
 
 在推理页面可以:
 - 加载模型 (支持基础模型和 LoRA adapter)
@@ -156,7 +212,7 @@ custom_ui/
 - 进行对话式推理
 - 查看 token 使用统计
 
-### 3. 模型部署
+### 4. 模型部署
 
 在部署页面可以:
 - 将模型部署为 API 服务

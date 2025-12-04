@@ -27,9 +27,10 @@ app.add_middleware(
 )
 
 # 导入路由
-from api import train, infer, deploy, model
+from api import train, infer, deploy, model, data
 
 # 注册路由
+app.include_router(data.router, prefix="/api/data", tags=["数据管理"])
 app.include_router(train.router, prefix="/api/train", tags=["训练"])
 app.include_router(infer.router, prefix="/api/infer", tags=["推理"])
 app.include_router(deploy.router, prefix="/api/deploy", tags=["部署"])

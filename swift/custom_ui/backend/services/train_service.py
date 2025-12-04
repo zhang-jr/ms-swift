@@ -8,11 +8,47 @@ from pathlib import Path
 from typing import Dict, Any
 from datetime import datetime
 
+# 数据目录
+DATA_DIR = Path("/app/data")
+
 class TrainService:
     """训练服务类"""
 
     def __init__(self):
         self.running_tasks: Dict[str, Any] = {}
+
+    def resolve_dataset_path(self, dataset: str) -> str:
+        """
+        解析数据集路径
+        如果是文件名，自动从 /app/data 目录查找
+        如果是绝对路径，直接使用
+
+        Args:
+            dataset: 数据集文件名或路径
+
+        Returns:
+            str: 完整的数据集路径
+
+        Raises:
+            FileNotFoundError: 数据集文件不存在
+        """
+        dataset_path = Path(dataset)
+
+        # 如果是绝对路径，直接使用
+        if dataset_path.is_absolute():
+            if not dataset_path.exists():
+                raise FileNotFoundError(f"数据集不存在: {dataset}")
+            return str(dataset_path)
+
+        # 如果是相对路径或文件名，在 DATA_DIR 中查找
+        full_path = DATA_DIR / dataset
+        if not full_path.exists():
+            raise FileNotFoundError(
+                f"数据集文件不存在: {dataset}。"
+                f"请先通过 /api/data/upload 上传数据集，或使用绝对路径。"
+            )
+
+        return str(full_path)
 
     async def run_training(self, task_id: str, config: Dict[str, Any]):
         """
@@ -26,6 +62,10 @@ class TrainService:
         from api.train import get_task, update_task
 
         try:
+            # 解析数据集路径
+            dataset_path = self.resolve_dataset_path(config['dataset'])
+            config['dataset'] = dataset_path
+
             # 更新状态为运行中
             update_task(task_id, {
                 "status": "running",
