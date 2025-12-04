@@ -1,9 +1,7 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
-import { Layout as AntLayout, Menu, theme } from 'antd'
+import { Layout as AntLayout, Menu } from 'antd'
 import {
   ExperimentOutlined,
-  MessageOutlined,
-  CloudServerOutlined,
   GithubOutlined,
   RocketOutlined,
   ThunderboltOutlined,
@@ -14,9 +12,6 @@ const { Header, Content, Footer } = AntLayout
 
 const Layout = () => {
   const location = useLocation()
-  const {
-    token: { colorBgContainer },
-  } = theme.useToken()
 
   const menuItems = [
     {
