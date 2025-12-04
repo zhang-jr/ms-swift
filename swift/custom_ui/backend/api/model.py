@@ -45,14 +45,24 @@ def scan_models() -> List[Dict[str, Any]]:
     Returns:
         List[Dict]: 模型信息列表
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     models = []
 
+    logger.info(f"[scan_models] 扫描目录: {MODEL_DIR}")
+    logger.info(f"[scan_models] 目录是否存在: {MODEL_DIR.exists()}")
+
     if not MODEL_DIR.exists():
+        logger.warning(f"[scan_models] 目录不存在，创建目录: {MODEL_DIR}")
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
         return models
 
     # 遍历一级子目录
-    for model_path in MODEL_DIR.iterdir():
+    all_dirs = list(MODEL_DIR.iterdir())
+    logger.info(f"[scan_models] 目录中的所有项: {[d.name for d in all_dirs]}")
+
+    for model_path in all_dirs:
         if not model_path.is_dir():
             continue
 
@@ -88,6 +98,8 @@ def scan_models() -> List[Dict[str, Any]]:
         except Exception:
             pass
 
+        logger.info(f"[scan_models] 找到有效模型: {model_name}")
+
         models.append({
             "model_id": str(model_path),
             "model_name": model_name,
@@ -97,6 +109,7 @@ def scan_models() -> List[Dict[str, Any]]:
             "tags": ["local"]
         })
 
+    logger.info(f"[scan_models] 扫描完成，共找到 {len(models)} 个模型")
     return models
 
 
@@ -110,9 +123,16 @@ def scan_datasets() -> List[Dict[str, Any]]:
     Returns:
         List[Dict]: 数据集信息列表
     """
+    import logging
+    logger = logging.getLogger(__name__)
+
     datasets = []
 
+    logger.info(f"[scan_datasets] 扫描目录: {DATA_DIR}")
+    logger.info(f"[scan_datasets] 目录是否存在: {DATA_DIR.exists()}")
+
     if not DATA_DIR.exists():
+        logger.warning(f"[scan_datasets] 目录不存在，创建目录: {DATA_DIR}")
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         return datasets
 
@@ -120,12 +140,19 @@ def scan_datasets() -> List[Dict[str, Any]]:
     supported_extensions = {'.jsonl', '.json', '.csv', '.tsv', '.txt'}
 
     # 遍历数据目录中的文件
-    for file_path in DATA_DIR.iterdir():
+    all_files = list(DATA_DIR.iterdir())
+    logger.info(f"[scan_datasets] 目录中的所有项: {[f.name for f in all_files]}")
+
+    for file_path in all_files:
         if not file_path.is_file():
+            logger.debug(f"[scan_datasets] 跳过非文件: {file_path.name}")
             continue
 
         if file_path.suffix.lower() not in supported_extensions:
+            logger.debug(f"[scan_datasets] 跳过不支持的格式: {file_path.name} (后缀: {file_path.suffix})")
             continue
+
+        logger.info(f"[scan_datasets] 找到数据集文件: {file_path.name}")
 
         # 获取文件信息
         file_name = file_path.name
@@ -161,6 +188,7 @@ def scan_datasets() -> List[Dict[str, Any]]:
             "tags": [file_path.suffix.lower().replace('.', '')]
         })
 
+    logger.info(f"[scan_datasets] 扫描完成，共找到 {len(datasets)} 个数据集")
     return datasets
 
 @router.get("/models", response_model=List[ModelInfo])
