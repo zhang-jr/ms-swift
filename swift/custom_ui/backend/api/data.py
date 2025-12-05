@@ -24,15 +24,20 @@ ALLOWED_EXTENSIONS = {".csv", ".jsonl", ".json", ".txt", ".tsv"}
 MAX_FILE_SIZE = 1024 * 1024 * 1024  # 1GB
 
 class DatasetInfo(BaseModel):
-    """数据集信息"""
-    filename: str
-    filepath: str
-    size: int
-    size_mb: float
-    format: str
-    rows: Optional[int] = None
+    """数据集信息（文件夹模式）"""
+    name: str  # 文件夹名称
+    path: str  # 相对路径
+    is_directory: bool  # 是否为文件夹
+    file_count: Optional[int] = None  # 文件夹内文件数量
+    total_size: int  # 总大小（字节）
+    size_mb: float  # 大小（MB）
     created_at: str
     modified_at: str
+
+    # 兼容旧的文件模式
+    filename: Optional[str] = None
+    format: Optional[str] = None
+    rows: Optional[int] = None
 
 class UploadResponse(BaseModel):
     """上传响应"""
@@ -49,30 +54,60 @@ class DatasetPreview(BaseModel):
     preview_rows: List[dict]
     columns: Optional[List[str]] = None
 
-def get_file_info(filepath: Path) -> DatasetInfo:
-    """获取文件信息"""
-    stat = filepath.stat()
-    file_size = stat.st_size
+def get_directory_size(dirpath: Path) -> tuple[int, int]:
+    """计算文件夹大小和文件数量"""
+    total_size = 0
+    file_count = 0
+    try:
+        for item in dirpath.rglob('*'):
+            if item.is_file():
+                total_size += item.stat().st_size
+                file_count += 1
+    except Exception as e:
+        print(f"Warning: Failed to calculate size for {dirpath}: {e}")
+    return total_size, file_count
 
-    # 尝试计算行数
-    rows = None
-    if filepath.suffix in [".csv", ".jsonl", ".txt", ".tsv"]:
-        try:
-            with open(filepath, 'r', encoding='utf-8') as f:
-                rows = sum(1 for _ in f)
-        except:
-            pass
+def get_dataset_info(path: Path) -> DatasetInfo:
+    """获取数据集信息（支持文件夹和文件）"""
+    stat = path.stat()
 
-    return DatasetInfo(
-        filename=filepath.name,
-        filepath=str(filepath.relative_to(DATA_DIR)),
-        size=file_size,
-        size_mb=round(file_size / (1024 * 1024), 2),
-        format=filepath.suffix.lstrip('.'),
-        rows=rows,
-        created_at=datetime.fromtimestamp(stat.st_ctime).isoformat(),
-        modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat()
-    )
+    if path.is_dir():
+        # 文件夹模式
+        total_size, file_count = get_directory_size(path)
+        return DatasetInfo(
+            name=path.name,
+            path=str(path.relative_to(DATA_DIR)),
+            is_directory=True,
+            file_count=file_count,
+            total_size=total_size,
+            size_mb=round(total_size / (1024 * 1024), 2),
+            created_at=datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat()
+        )
+    else:
+        # 文件模式（兼容旧版本）
+        file_size = stat.st_size
+        rows = None
+        if path.suffix in [".csv", ".jsonl", ".txt", ".tsv"]:
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    rows = sum(1 for _ in f)
+            except:
+                pass
+
+        return DatasetInfo(
+            name=path.name,
+            path=str(path.relative_to(DATA_DIR)),
+            is_directory=False,
+            file_count=1,
+            total_size=file_size,
+            size_mb=round(file_size / (1024 * 1024), 2),
+            filename=path.name,
+            format=path.suffix.lstrip('.'),
+            rows=rows,
+            created_at=datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat()
+        )
 
 @router.post("/upload", response_model=UploadResponse)
 async def upload_dataset(file: UploadFile = File(...)):
@@ -136,23 +171,89 @@ async def upload_dataset(file: UploadFile = File(...)):
             filepath.unlink()
         raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
 
-@router.get("/list", response_model=List[DatasetInfo])
-async def list_datasets():
+@router.post("/upload-folder")
+async def upload_folder(files: List[UploadFile] = File(...), folder_name: str = ""):
     """
-    获取所有已上传的数据集列表
+    上传数据集文件夹（批量上传）
+
+    前端需要将文件夹内所有文件一起上传，并指定文件夹名称
+
+    Args:
+        files: 文件列表
+        folder_name: 文件夹名称
+
+    Returns:
+        dict: 上传结果
+    """
+    if not folder_name:
+        raise HTTPException(status_code=400, detail="必须指定文件夹名称")
+
+    # 创建文件夹
+    folder_path = DATA_DIR / folder_name
+    if folder_path.exists():
+        raise HTTPException(status_code=409, detail=f"文件夹 {folder_name} 已存在")
+
+    try:
+        folder_path.mkdir(parents=True, exist_ok=False)
+
+        total_size = 0
+        uploaded_files = []
+
+        for file in files:
+            # 保存文件到文件夹
+            safe_filename = Path(file.filename).name
+            filepath = folder_path / safe_filename
+
+            with open(filepath, "wb") as buffer:
+                file_size = 0
+                while chunk := await file.read(1024 * 1024):
+                    file_size += len(chunk)
+                    buffer.write(chunk)
+
+            total_size += file_size
+            uploaded_files.append(safe_filename)
+
+        return {
+            "folder_name": folder_name,
+            "file_count": len(uploaded_files),
+            "total_size_mb": round(total_size / (1024 * 1024), 2),
+            "files": uploaded_files,
+            "message": f"成功上传文件夹 {folder_name}，共 {len(uploaded_files)} 个文件"
+        }
+
+    except Exception as e:
+        # 清理失败的上传
+        if folder_path.exists():
+            shutil.rmtree(folder_path)
+        raise HTTPException(status_code=500, detail=f"文件夹上传失败: {str(e)}")
+
+@router.get("/list", response_model=List[DatasetInfo])
+async def list_datasets(include_files: bool = False):
+    """
+    获取所有已上传的数据集列表（默认只返回文件夹）
+
+    Args:
+        include_files: 是否包含文件（默认 False，只返回文件夹）
 
     Returns:
         List[DatasetInfo]: 数据集信息列表
     """
     datasets = []
 
-    for filepath in DATA_DIR.iterdir():
-        if filepath.is_file() and filepath.suffix.lower() in ALLOWED_EXTENSIONS:
+    for item in DATA_DIR.iterdir():
+        # 默认只扫描文件夹
+        if item.is_dir():
             try:
-                datasets.append(get_file_info(filepath))
+                datasets.append(get_dataset_info(item))
             except Exception as e:
-                # 跳过无法读取的文件
-                print(f"Warning: Failed to read {filepath}: {e}")
+                print(f"Warning: Failed to read directory {item}: {e}")
+                continue
+        # 可选：也包含单个文件（用于兼容旧数据）
+        elif include_files and item.is_file() and item.suffix.lower() in ALLOWED_EXTENSIONS:
+            try:
+                datasets.append(get_dataset_info(item))
+            except Exception as e:
+                print(f"Warning: Failed to read file {item}: {e}")
                 continue
 
     # 按修改时间倒序排序
@@ -292,20 +393,20 @@ async def delete_dataset(filename: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
 
-@router.get("/info/{filename}", response_model=DatasetInfo)
-async def get_dataset_info(filename: str):
+@router.get("/info/{name}", response_model=DatasetInfo)
+async def get_dataset_info_endpoint(name: str):
     """
-    获取数据集详细信息
+    获取数据集详细信息（支持文件夹和文件）
 
     Args:
-        filename: 文件名
+        name: 文件夹名或文件名
 
     Returns:
         DatasetInfo: 数据集信息
     """
-    filepath = DATA_DIR / filename
+    path = DATA_DIR / name
 
-    if not filepath.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="数据集不存在")
 
-    return get_file_info(filepath)
+    return get_dataset_info(path)

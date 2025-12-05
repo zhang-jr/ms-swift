@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { ConfigProvider, theme } from 'antd'
 import zhCN from 'antd/locale/zh_CN'
 import Layout from './components/Layout'
+import DataManagementPage from './pages/DataManagementPage'
 import TrainPage from './pages/TrainPage'
 import InferPage from './pages/InferPage'
 import DeployPage from './pages/DeployPage'
@@ -43,7 +44,8 @@ function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
-            <Route index element={<Navigate to="/train" replace />} />
+            <Route index element={<Navigate to="/data" replace />} />
+            <Route path="data" element={<DataManagementPage />} />
             <Route path="train" element={<TrainPage />} />
             <Route path="infer" element={<InferPage />} />
             <Route path="deploy" element={<DeployPage />} />
