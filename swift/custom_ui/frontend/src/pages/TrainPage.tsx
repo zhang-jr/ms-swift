@@ -43,6 +43,7 @@ const { Panel } = Collapse
 const TrainPage = () => {
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
+  const [initialLoading, setInitialLoading] = useState(true)
   const [training, setTraining] = useState(false)
   const [currentTask, setCurrentTask] = useState<TrainStatus | null>(null)
   const [logs, setLogs] = useState<string[]>([])
@@ -55,6 +56,7 @@ const TrainPage = () => {
   }, [])
 
   const loadModelsAndDatasets = async () => {
+    setInitialLoading(true)
     try {
       const [modelsData, datasetsData] = await Promise.all([
         modelAPI.getModels(),
@@ -64,6 +66,8 @@ const TrainPage = () => {
       setDatasets(datasetsData)
     } catch (error) {
       message.error('加载模型和数据集列表失败')
+    } finally {
+      setInitialLoading(false)
     }
   }
 
@@ -129,6 +133,18 @@ const TrainPage = () => {
     } catch (error: any) {
       message.error(error.message || '停止训练失败')
     }
+  }
+
+  // 加载状态
+  if (initialLoading) {
+    return (
+      <div style={{ textAlign: 'center', padding: '100px 0' }}>
+        <SyncOutlined spin style={{ fontSize: '48px', color: '#667eea', marginBottom: '16px' }} />
+        <div style={{ color: 'rgba(255, 255, 255, 0.65)', fontSize: '16px' }}>
+          加载训练配置中...
+        </div>
+      </div>
+    )
   }
 
   return (
