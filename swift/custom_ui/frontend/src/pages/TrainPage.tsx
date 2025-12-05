@@ -58,15 +58,21 @@ const TrainPage = () => {
   const loadModelsAndDatasets = async () => {
     setInitialLoading(true)
     try {
+      console.log('开始加载模型和数据集...')
       const [modelsData, datasetsData] = await Promise.all([
         modelAPI.getModels(),
         dataAPI.listDatasets(), // 使用文件夹列表
       ])
+      console.log('模型数据:', modelsData)
+      console.log('数据集数据:', datasetsData)
       setModels(modelsData)
       setDatasets(datasetsData)
-    } catch (error) {
-      message.error('加载模型和数据集列表失败')
+      console.log('数据加载完成')
+    } catch (error: any) {
+      console.error('加载失败:', error)
+      message.error(`加载模型和数据集列表失败: ${error.message}`)
     } finally {
+      console.log('设置 initialLoading = false')
       setInitialLoading(false)
     }
   }
@@ -136,7 +142,10 @@ const TrainPage = () => {
   }
 
   // 加载状态
+  console.log('TrainPage 渲染, initialLoading:', initialLoading, 'models:', models.length, 'datasets:', datasets.length)
+
   if (initialLoading) {
+    console.log('显示加载中...')
     return (
       <div style={{ textAlign: 'center', padding: '100px 0' }}>
         <SyncOutlined spin style={{ fontSize: '48px', color: '#667eea', marginBottom: '16px' }} />
@@ -147,6 +156,7 @@ const TrainPage = () => {
     )
   }
 
+  console.log('显示正常页面')
   return (
     <div>
       <Title level={2} style={{ color: '#fff', display: 'flex', alignItems: 'center', gap: '12px' }}>
