@@ -39,7 +39,7 @@ const DataManagementPage = () => {
   const loadDatasets = async () => {
     setLoading(true)
     try {
-      const data = await dataAPI.listDatasets()
+      const data = await dataAPI.listDatasets(true) // 传入 true 同时显示文件和文件夹
       setDatasets(data)
     } catch (error: any) {
       message.error(`加载数据集失败: ${error.message}`)

@@ -61,7 +61,7 @@ const TrainPage = () => {
       console.log('开始加载模型和数据集...')
       const [modelsData, datasetsData] = await Promise.all([
         modelAPI.getModels(),
-        dataAPI.listDatasets(), // 使用文件夹列表
+        dataAPI.listDatasets(true), // 传入 true 同时显示文件和文件夹
       ])
       console.log('模型数据:', modelsData)
       console.log('数据集数据:', datasetsData)
