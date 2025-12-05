@@ -65,12 +65,17 @@ const TrainPage = () => {
       ])
       console.log('模型数据:', modelsData)
       console.log('数据集数据:', datasetsData)
-      setModels(modelsData)
-      setDatasets(datasetsData)
+
+      // 防御性编程：确保返回的是数组
+      setModels(Array.isArray(modelsData) ? modelsData : [])
+      setDatasets(Array.isArray(datasetsData) ? datasetsData : [])
       console.log('数据加载完成')
     } catch (error: any) {
       console.error('加载失败:', error)
       message.error(`加载模型和数据集列表失败: ${error.message}`)
+      // 错误时也设置为空数组，避免 undefined
+      setModels([])
+      setDatasets([])
     } finally {
       console.log('设置 initialLoading = false')
       setInitialLoading(false)
@@ -175,14 +180,14 @@ const TrainPage = () => {
             style={{ marginBottom: 16 }}
             extra={
               <Space>
-                <Tag color="purple">{datasets.length} 个文件夹</Tag>
+                <Tag color="purple">{(datasets || []).length} 个文件夹</Tag>
                 <Button type="link" size="small">
                   <Link to="/data">管理数据集</Link>
                 </Button>
               </Space>
             }
           >
-            {datasets.length === 0 ? (
+            {(datasets || []).length === 0 ? (
               <Alert
                 message="暂无数据集"
                 description={
@@ -212,7 +217,7 @@ const TrainPage = () => {
             ) : (
               <Alert
                 message="数据集已就绪"
-                description={`已有 ${datasets.length} 个数据集文件夹可用于训练`}
+                description={`已有 ${(datasets || []).length} 个数据集文件夹可用于训练`}
                 type="success"
                 showIcon
                 style={{
@@ -280,7 +285,7 @@ const TrainPage = () => {
                   filterOption={(input, option) =>
                     (option?.value ?? '').toLowerCase().includes(input.toLowerCase())
                   }
-                  options={datasets
+                  options={(datasets || [])
                     .filter((d) => d.is_directory) // 只显示文件夹
                     .map((d) => ({
                       label: (

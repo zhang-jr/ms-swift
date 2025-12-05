@@ -24,10 +24,12 @@ apiClient.interceptors.request.use(
 // 响应拦截器
 apiClient.interceptors.response.use(
   (response) => {
+    console.log('API 响应:', response.config.url, response.data)
     return response.data
   },
   (error) => {
     // 统一错误处理
+    console.error('API 错误:', error.config?.url, error)
     const message = error.response?.data?.message || error.message || '请求失败'
     return Promise.reject(new Error(message))
   }
