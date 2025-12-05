@@ -2,7 +2,7 @@
 数据管理 API 端点
 提供数据上传、列表、删除、预览等功能
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional
@@ -179,7 +179,10 @@ async def upload_dataset(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"文件上传失败: {str(e)}")
 
 @router.post("/upload-folder")
-async def upload_folder(files: List[UploadFile] = File(...), folder_name: str = ""):
+async def upload_folder(
+    files: List[UploadFile] = File(...),
+    folder_name: str = Form(...)
+):
     """
     上传数据集文件夹（批量上传）
 
@@ -187,7 +190,7 @@ async def upload_folder(files: List[UploadFile] = File(...), folder_name: str = 
 
     Args:
         files: 文件列表
-        folder_name: 文件夹名称
+        folder_name: 文件夹名称（通过 Form 字段传递）
 
     Returns:
         dict: 上传结果
