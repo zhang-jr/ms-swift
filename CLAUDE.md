@@ -226,7 +226,7 @@ app.include_router(model.router, prefix="/api/model", tags=["模型管理"])
 - 文件大小、行数统计
 - 路径安全验证（防止路径遍历攻击）
 
-#### 任务 2.3: 训练 API 开发 ✅
+#### 任务 2.3: 训练 API 开发 ✅ **[已完成 - 真实训练集成]**
 - [x] `/api/train/start` - 启动训练
 - [x] `/api/train/stop` - 停止训练
 - [x] `/api/train/status/{task_id}` - 获取训练状态
@@ -234,35 +234,55 @@ app.include_router(model.router, prefix="/api/model", tags=["模型管理"])
 - [x] `/api/train/delete/{task_id}` - 删除训练任务
 - [x] `/ws/logs/{task_id}` - 实时日志 (WebSocket)
 
-**已实现功能**:
-- 自动解析数据集路径（支持文件名或绝对路径）
-- 训练时传入文件名，系统自动从 `/app/data` 读取
-- 训练输出自动保存到 `/app/output/{task_id}/`
+**已实现功能** (使用真实 ms-swift 训练引擎):
+- ✅ 通过 `swift sft` 命令行调用真实训练
+- ✅ 自动解析数据集路径（支持文件名或绝对路径）
+- ✅ 训练时传入文件名，系统自动从 `/app/data` 读取
+- ✅ 训练输出自动保存到 `/app/output/{task_id}/`
+- ✅ 实时捕获训练日志并通过 WebSocket 推送
+- ✅ 自动解析训练进度（epoch, loss, learning_rate）
+- ✅ 支持停止训练（SIGTERM -> SIGKILL）
+- ✅ 支持完整的训练参数配置（LoRA rank, learning_rate, epochs 等）
 
-**参考实现**:
+**真实训练实现** (`services/train_service.py`):
 ```python
-# custom_ui/backend/api/train.py
-from fastapi import APIRouter, BackgroundTasks
-from services.train_service import TrainService
+# 核心实现：使用 subprocess 调用 swift sft 命令
+def build_train_command(self, task_id: str, config: Dict[str, Any]) -> list:
+    dataset_path = self.resolve_dataset_path(config['dataset'])
+    output_dir = OUTPUT_DIR / task_id
 
-router = APIRouter()
-train_service = TrainService()
+    cmd = [
+        "swift", "sft",
+        "--model", config.get('model', 'Qwen/Qwen2.5-7B-Instruct'),
+        "--dataset", dataset_path,
+        "--output_dir", str(output_dir),
+        "--train_type", config.get('train_type', 'lora'),
+        "--num_train_epochs", str(config.get('num_train_epochs', 1)),
+        "--learning_rate", str(config.get('learning_rate', 1e-4)),
+        # ... 更多参数
+    ]
+    return cmd
 
-@router.post("/start")
-async def start_training(
-    model_id: str,
-    dataset: str,
-    train_type: str = "lora",
-    background_tasks: BackgroundTasks
-):
-    """启动训练任务"""
-    task_id = train_service.create_task(
-        model_id=model_id,
-        dataset=dataset,
-        train_type=train_type
-    )
-    background_tasks.add_task(train_service.run_training, task_id)
-    return {"task_id": task_id, "status": "started"}
+async def run_training(self, task_id: str, config: Dict[str, Any]):
+    # 启动训练进程
+    process = subprocess.Popen(cmd, stdout=PIPE, stderr=STDOUT, text=True)
+
+    # 异步读取日志并推送到 WebSocket
+    async def read_stream():
+        while True:
+            line = await loop.run_in_executor(None, process.stdout.readline)
+            if not line: break
+
+            # 推送日志
+            await self._send_log_to_websocket(task_id, line.strip())
+
+            # 解析进度（epoch, loss, learning_rate）
+            progress_info = self._parse_training_log(line, total_epochs)
+            if progress_info:
+                update_task(task_id, progress_info)
+
+    await read_stream()
+    return_code = await loop.run_in_executor(None, process.wait)
 ```
 
 #### 任务 2.4: 推理 API 开发 ✅
