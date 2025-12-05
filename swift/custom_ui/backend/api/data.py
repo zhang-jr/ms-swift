@@ -54,6 +54,13 @@ class DatasetPreview(BaseModel):
     preview_rows: List[dict]
     columns: Optional[List[str]] = None
 
+class FolderPreview(BaseModel):
+    """文件夹预览"""
+    folder_name: str
+    files: List[dict]  # 文件列表：[{name, size, type, modified_at}]
+    total_files: int
+    total_size_mb: float
+
 def get_directory_size(dirpath: Path) -> tuple[int, int]:
     """计算文件夹大小和文件数量"""
     total_size = 0
@@ -261,6 +268,56 @@ async def list_datasets(include_files: bool = False):
 
     return datasets
 
+@router.get("/preview-folder/{folder_name}")
+async def preview_folder(folder_name: str):
+    """
+    预览文件夹内容（文件列表）
+
+    Args:
+        folder_name: 文件夹名称
+
+    Returns:
+        FolderPreview: 文件夹预览信息
+    """
+    folder_path = DATA_DIR / folder_name
+
+    if not folder_path.exists():
+        raise HTTPException(status_code=404, detail="文件夹不存在")
+
+    if not folder_path.is_dir():
+        raise HTTPException(status_code=400, detail="不是文件夹")
+
+    try:
+        files = []
+        total_size = 0
+
+        for item in folder_path.iterdir():
+            if item.is_file():
+                stat = item.stat()
+                file_size = stat.st_size
+                total_size += file_size
+
+                files.append({
+                    "name": item.name,
+                    "size": file_size,
+                    "size_mb": round(file_size / (1024 * 1024), 2),
+                    "type": item.suffix.lstrip('.') or 'file',
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat()
+                })
+
+        # 按文件名排序
+        files.sort(key=lambda x: x['name'])
+
+        return {
+            "folder_name": folder_name,
+            "files": files,
+            "total_files": len(files),
+            "total_size_mb": round(total_size / (1024 * 1024), 2)
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"预览失败: {str(e)}")
+
 @router.get("/preview/{filename}", response_model=DatasetPreview)
 async def preview_dataset(filename: str, rows: int = 10):
     """
@@ -371,25 +428,31 @@ async def download_dataset(filename: str):
         media_type="application/octet-stream"
     )
 
-@router.delete("/delete/{filename}")
-async def delete_dataset(filename: str):
+@router.delete("/delete/{name}")
+async def delete_dataset(name: str):
     """
-    删除数据集文件
+    删除数据集（支持文件和文件夹递归删除）
 
     Args:
-        filename: 文件名
+        name: 文件名或文件夹名
 
     Returns:
         dict: 操作结果
     """
-    filepath = DATA_DIR / filename
+    path = DATA_DIR / name
 
-    if not filepath.exists():
-        raise HTTPException(status_code=404, detail="文件不存在")
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="数据集不存在")
 
     try:
-        filepath.unlink()
-        return {"message": f"文件 {filename} 已删除"}
+        if path.is_dir():
+            # 递归删除文件夹
+            shutil.rmtree(path)
+            return {"message": f"文件夹 {name} 及其所有内容已删除"}
+        else:
+            # 删除单个文件
+            path.unlink()
+            return {"message": f"文件 {name} 已删除"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
 

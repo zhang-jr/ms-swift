@@ -10,6 +10,7 @@ import {
   Tag,
   Input,
   Popconfirm,
+  Descriptions,
 } from 'antd'
 import {
   UploadOutlined,
@@ -18,20 +19,11 @@ import {
   EyeOutlined,
   DownloadOutlined,
   ReloadOutlined,
+  FileOutlined,
 } from '@ant-design/icons'
 import type { UploadFile } from 'antd'
 import { dataAPI } from '../api/data'
-
-interface DatasetInfo {
-  name: string
-  path: string
-  is_directory: boolean
-  file_count?: number
-  total_size: number
-  size_mb: number
-  created_at: string
-  modified_at: string
-}
+import type { DatasetInfo, FolderPreview } from '../api/data'
 
 const DataManagementPage = () => {
   const [datasets, setDatasets] = useState<DatasetInfo[]>([])
@@ -39,6 +31,9 @@ const DataManagementPage = () => {
   const [uploadModalVisible, setUploadModalVisible] = useState(false)
   const [folderName, setFolderName] = useState('')
   const [fileList, setFileList] = useState<UploadFile[]>([])
+  const [previewModalVisible, setPreviewModalVisible] = useState(false)
+  const [previewData, setPreviewData] = useState<FolderPreview | null>(null)
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   // 加载数据集列表
   const loadDatasets = async () => {
@@ -75,6 +70,26 @@ const DataManagementPage = () => {
       window.open(url, '_blank')
     } catch (error: any) {
       message.error(`下载失败: ${error.message}`)
+    }
+  }
+
+  // 预览文件夹
+  const handlePreview = async (name: string, isDirectory: boolean) => {
+    if (!isDirectory) {
+      message.info('单个文件预览功能开发中')
+      return
+    }
+
+    setPreviewLoading(true)
+    setPreviewModalVisible(true)
+    try {
+      const data = await dataAPI.previewFolder(name)
+      setPreviewData(data)
+    } catch (error: any) {
+      message.error(`预览失败: ${error.message}`)
+      setPreviewModalVisible(false)
+    } finally {
+      setPreviewLoading(false)
     }
   }
 
@@ -149,29 +164,27 @@ const DataManagementPage = () => {
       key: 'actions',
       render: (_: any, record: DatasetInfo) => (
         <Space>
+          <Button
+            type="link"
+            size="small"
+            icon={<EyeOutlined />}
+            onClick={() => handlePreview(record.name, record.is_directory)}
+          >
+            预览
+          </Button>
           {!record.is_directory && (
-            <>
-              <Button
-                type="link"
-                size="small"
-                icon={<EyeOutlined />}
-                onClick={() => message.info('预览功能开发中')}
-              >
-                预览
-              </Button>
-              <Button
-                type="link"
-                size="small"
-                icon={<DownloadOutlined />}
-                onClick={() => handleDownload(record.name)}
-              >
-                下载
-              </Button>
-            </>
+            <Button
+              type="link"
+              size="small"
+              icon={<DownloadOutlined />}
+              onClick={() => handleDownload(record.name)}
+            >
+              下载
+            </Button>
           )}
           <Popconfirm
             title="确定删除吗？"
-            description={`将删除 ${record.is_directory ? '文件夹' : '文件'}: ${record.name}`}
+            description={`将删除 ${record.is_directory ? '文件夹及其所有内容' : '文件'}: ${record.name}`}
             onConfirm={() => handleDelete(record.name)}
             okText="确定"
             cancelText="取消"
@@ -261,6 +274,83 @@ const DataManagementPage = () => {
             </div>
           </div>
         </Space>
+      </Modal>
+
+      {/* 预览文件夹模态框 */}
+      <Modal
+        title={
+          <Space>
+            <FolderOutlined />
+            {previewData?.folder_name || '文件夹预览'}
+          </Space>
+        }
+        open={previewModalVisible}
+        onCancel={() => {
+          setPreviewModalVisible(false)
+          setPreviewData(null)
+        }}
+        footer={[
+          <Button key="close" onClick={() => setPreviewModalVisible(false)}>
+            关闭
+          </Button>,
+        ]}
+        width={800}
+      >
+        {previewLoading ? (
+          <div style={{ textAlign: 'center', padding: '40px' }}>加载中...</div>
+        ) : previewData ? (
+          <>
+            <Descriptions bordered size="small" style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="文件数量">
+                {previewData.total_files}
+              </Descriptions.Item>
+              <Descriptions.Item label="总大小">
+                {previewData.total_size_mb.toFixed(2)} MB
+              </Descriptions.Item>
+            </Descriptions>
+
+            <Table
+              dataSource={previewData.files}
+              rowKey="name"
+              size="small"
+              pagination={{ pageSize: 10 }}
+              columns={[
+                {
+                  title: '文件名',
+                  dataIndex: 'name',
+                  key: 'name',
+                  render: (text: string, record: any) => (
+                    <Space>
+                      <FileOutlined />
+                      <span>{text}</span>
+                    </Space>
+                  ),
+                },
+                {
+                  title: '类型',
+                  dataIndex: 'type',
+                  key: 'type',
+                  render: (type: string) => (
+                    <Tag color="blue">{type.toUpperCase()}</Tag>
+                  ),
+                },
+                {
+                  title: '大小',
+                  dataIndex: 'size_mb',
+                  key: 'size_mb',
+                  render: (size: number) => `${size.toFixed(2)} MB`,
+                },
+                {
+                  title: '修改时间',
+                  dataIndex: 'modified_at',
+                  key: 'modified_at',
+                  render: (time: string) =>
+                    new Date(time).toLocaleString('zh-CN'),
+                },
+              ]}
+            />
+          </>
+        ) : null}
       </Modal>
     </div>
   )

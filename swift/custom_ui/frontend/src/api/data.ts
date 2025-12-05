@@ -41,6 +41,19 @@ export interface PreviewResponse {
   total_lines?: number
 }
 
+export interface FolderPreview {
+  folder_name: string
+  files: {
+    name: string
+    size: number
+    size_mb: number
+    type: string
+    modified_at: string
+  }[]
+  total_files: number
+  total_size_mb: number
+}
+
 /**
  * 获取数据集列表（默认只返回文件夹）
  */
@@ -109,7 +122,15 @@ export const downloadDataset = (name: string): string => {
 }
 
 /**
- * 预览数据集
+ * 预览文件夹内容（文件列表）
+ */
+export const previewFolder = async (folderName: string): Promise<FolderPreview> => {
+  const response = await apiClient.get(`/data/preview-folder/${folderName}`)
+  return response.data
+}
+
+/**
+ * 预览数据集文件
  */
 export const previewDataset = async (filename: string, lines: number = 10): Promise<PreviewResponse> => {
   const response = await apiClient.get(`/data/preview/${filename}`, {
@@ -125,5 +146,6 @@ export const dataAPI = {
   deleteDataset,
   getDatasetInfo,
   downloadDataset,
+  previewFolder,
   previewDataset,
 }

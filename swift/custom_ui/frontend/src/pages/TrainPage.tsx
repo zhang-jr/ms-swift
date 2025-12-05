@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import {
   Card,
   Form,
@@ -13,11 +14,9 @@ import {
   Row,
   Col,
   Collapse,
-  Upload,
   Alert,
-  Statistic,
+  Tag,
 } from 'antd'
-import type { UploadProps } from 'antd'
 import {
   PlayCircleOutlined,
   StopOutlined,
@@ -28,14 +27,14 @@ import {
   SyncOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
-  InboxOutlined,
-  CloudUploadOutlined,
   DatabaseOutlined,
+  FolderOutlined,
 } from '@ant-design/icons'
 import { trainAPI, connectTrainLogs } from '@/api/train'
 import { modelAPI } from '@/api/model'
 import { dataAPI } from '@/api/data'
-import type { TrainRequest, TrainStatus, ModelInfo, DatasetInfo } from '@/types'
+import type { TrainRequest, TrainStatus, ModelInfo } from '@/types'
+import type { DatasetInfo } from '@/api/data'
 
 const { Title, Text, Paragraph } = Typography
 const { Panel } = Collapse
@@ -48,8 +47,6 @@ const TrainPage = () => {
   const [logs, setLogs] = useState<string[]>([])
   const [models, setModels] = useState<ModelInfo[]>([])
   const [datasets, setDatasets] = useState<DatasetInfo[]>([])
-  const [uploading, setUploading] = useState(false)
-  const [datasetCount, setDatasetCount] = useState(0)
 
   // 加载模型和数据集列表
   useEffect(() => {
@@ -60,30 +57,12 @@ const TrainPage = () => {
     try {
       const [modelsData, datasetsData] = await Promise.all([
         modelAPI.getModels(),
-        modelAPI.getDatasets(),
+        dataAPI.listDatasets(), // 使用文件夹列表
       ])
       setModels(modelsData)
       setDatasets(datasetsData)
-      setDatasetCount(datasetsData.length)
     } catch (error) {
       message.error('加载模型和数据集列表失败')
-    }
-  }
-
-  // 处理数据集上传
-  const handleUpload: UploadProps['customRequest'] = async ({ file, onSuccess, onError }) => {
-    setUploading(true)
-    try {
-      const response = await dataAPI.uploadFile(file as File)
-      message.success(`${response.filename} 上传成功！`)
-      // 重新加载数据集列表
-      await loadModelsAndDatasets()
-      onSuccess?.(response)
-    } catch (error: any) {
-      message.error(error.message || '上传失败')
-      onError?.(error)
-    } finally {
-      setUploading(false)
     }
   }
 
@@ -162,55 +141,56 @@ const TrainPage = () => {
 
       <Row gutter={24}>
         <Col xs={24} lg={12}>
-          {/* 数据上传区域 */}
+          {/* 数据集提示区域 */}
           <Card
-            title={<span><DatabaseOutlined /> 数据集管理</span>}
+            title={<span><DatabaseOutlined /> 数据集</span>}
             bordered={false}
             style={{ marginBottom: 16 }}
             extra={
               <Space>
-                <Statistic
-                  value={datasetCount}
-                  suffix="个数据集"
-                  valueStyle={{ fontSize: '14px', color: '#667eea' }}
-                />
+                <Tag color="purple">{datasets.length} 个文件夹</Tag>
+                <Button type="link" size="small">
+                  <Link to="/data">管理数据集</Link>
+                </Button>
               </Space>
             }
           >
-            <Upload.Dragger
-              name="file"
-              multiple={false}
-              customRequest={handleUpload}
-              accept=".jsonl,.json,.csv,.tsv,.txt"
-              disabled={uploading}
-              showUploadList={false}
-              style={{
-                background: 'rgba(102, 126, 234, 0.05)',
-                border: '2px dashed rgba(102, 126, 234, 0.3)',
-              }}
-            >
-              <p className="ant-upload-drag-icon">
-                <InboxOutlined style={{ color: '#667eea', fontSize: '48px' }} />
-              </p>
-              <p className="ant-upload-text" style={{ color: 'rgba(255, 255, 255, 0.85)' }}>
-                点击或拖拽文件到此区域上传数据集
-              </p>
-              <p className="ant-upload-hint" style={{ color: 'rgba(255, 255, 255, 0.45)' }}>
-                支持 .jsonl, .json, .csv, .tsv, .txt 格式，单文件最大 1GB
-              </p>
-            </Upload.Dragger>
-
-            {datasetCount === 0 && (
+            {datasets.length === 0 ? (
               <Alert
                 message="暂无数据集"
-                description="请先上传训练数据集，支持常见的文本格式文件"
+                description={
+                  <>
+                    请先到{' '}
+                    <Link to="/data" style={{ color: '#667eea' }}>
+                      <DatabaseOutlined /> 数据管理
+                    </Link>{' '}
+                    页面上传训练数据集文件夹
+                  </>
+                }
                 type="info"
                 showIcon
-                icon={<CloudUploadOutlined />}
+                icon={<FolderOutlined />}
                 style={{
-                  marginTop: 16,
                   background: 'rgba(102, 126, 234, 0.1)',
-                  border: '1px solid rgba(102, 126, 234, 0.3)'
+                  border: '1px solid rgba(102, 126, 234, 0.3)',
+                }}
+                action={
+                  <Link to="/data">
+                    <Button type="primary" size="small">
+                      去上传
+                    </Button>
+                  </Link>
+                }
+              />
+            ) : (
+              <Alert
+                message="数据集已就绪"
+                description={`已有 ${datasets.length} 个数据集文件夹可用于训练`}
+                type="success"
+                showIcon
+                style={{
+                  background: 'rgba(82, 196, 26, 0.1)',
+                  border: '1px solid rgba(82, 196, 26, 0.3)',
                 }}
               />
             )}
@@ -262,21 +242,48 @@ const TrainPage = () => {
               </Form.Item>
 
               <Form.Item
-                label="数据集"
+                label="数据集文件夹"
                 name="dataset"
-                rules={[{ required: true, message: '请选择数据集' }]}
+                rules={[{ required: true, message: '请选择数据集文件夹' }]}
+                tooltip="选择已上传的数据集文件夹，系统会自动从 /app/data/{folder_name} 读取训练数据"
               >
                 <Select
                   showSearch
-                  placeholder="选择或搜索数据集"
+                  placeholder="选择数据集文件夹"
                   optionFilterProp="children"
                   filterOption={(input, option) =>
                     (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                   }
-                  options={datasets.map((d) => ({
-                    label: d.dataset_name,
-                    value: d.dataset_id,
-                  }))}
+                  options={datasets
+                    .filter((d) => d.is_directory) // 只显示文件夹
+                    .map((d) => ({
+                      label: (
+                        <Space>
+                          <FolderOutlined />
+                          {d.name}
+                          <Tag color="blue" style={{ marginLeft: 8 }}>
+                            {d.file_count || 0} 个文件
+                          </Tag>
+                          <span style={{ color: 'rgba(255, 255, 255, 0.45)', fontSize: '12px' }}>
+                            {d.size_mb.toFixed(2)} MB
+                          </span>
+                        </Space>
+                      ),
+                      value: d.name,
+                    }))}
+                  notFoundContent={
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                      <FolderOutlined style={{ fontSize: '24px', color: 'rgba(255, 255, 255, 0.25)' }} />
+                      <div style={{ marginTop: '8px', color: 'rgba(255, 255, 255, 0.45)' }}>
+                        暂无数据集文件夹
+                      </div>
+                      <Link to="/data">
+                        <Button type="link" size="small">
+                          去上传
+                        </Button>
+                      </Link>
+                    </div>
+                  }
                 />
               </Form.Item>
 
