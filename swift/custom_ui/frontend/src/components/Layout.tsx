@@ -1,8 +1,8 @@
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { Layout as AntLayout, Menu, Avatar, Dropdown } from 'antd'
+import type { MenuProps } from 'antd'
 import {
   ExperimentOutlined,
-  HomeOutlined,
   DatabaseOutlined,
   ThunderboltOutlined,
   ApiOutlined,
@@ -42,7 +42,7 @@ const Layout = () => {
   ]
 
   // 用户菜单
-  const userMenuItems = [
+  const userMenuItems: MenuProps['items'] = [
     {
       key: 'settings',
       icon: <SettingOutlined />,
@@ -50,6 +50,7 @@ const Layout = () => {
     },
     {
       type: 'divider',
+      key: 'divider',
     },
     {
       key: 'logout',

@@ -74,7 +74,7 @@ const TrainPage = () => {
   const handleUpload: UploadProps['customRequest'] = async ({ file, onSuccess, onError }) => {
     setUploading(true)
     try {
-      const response = await dataAPI.uploadDataset(file as File)
+      const response = await dataAPI.uploadFile(file as File)
       message.success(`${response.filename} 上传成功！`)
       // 重新加载数据集列表
       await loadModelsAndDatasets()
