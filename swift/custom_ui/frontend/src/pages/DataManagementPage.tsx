@@ -319,7 +319,7 @@ const DataManagementPage = () => {
                   title: '文件名',
                   dataIndex: 'name',
                   key: 'name',
-                  render: (text: string, record: any) => (
+                  render: (text: string) => (
                     <Space>
                       <FileOutlined />
                       <span>{text}</span>

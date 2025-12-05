@@ -16,6 +16,7 @@ import {
   Collapse,
   Alert,
   Tag,
+  Statistic,
 } from 'antd'
 import {
   PlayCircleOutlined,
@@ -250,9 +251,8 @@ const TrainPage = () => {
                 <Select
                   showSearch
                   placeholder="选择数据集文件夹"
-                  optionFilterProp="children"
                   filterOption={(input, option) =>
-                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                    (option?.value ?? '').toLowerCase().includes(input.toLowerCase())
                   }
                   options={datasets
                     .filter((d) => d.is_directory) // 只显示文件夹
