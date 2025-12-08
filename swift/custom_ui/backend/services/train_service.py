@@ -12,8 +12,9 @@ from datetime import datetime
 import json
 import re
 
-# 数据目录和输出目录
+# 数据目录、模型目录和输出目录
 DATA_DIR = Path("/app/data")
+MODEL_DIR = Path(os.getenv("MODEL_DIR", "/app/models"))
 OUTPUT_DIR = Path("/app/output")
 
 class TrainService:
@@ -21,6 +22,33 @@ class TrainService:
 
     def __init__(self):
         self.running_processes: Dict[str, subprocess.Popen] = {}
+
+    def resolve_model_path(self, model_id: str) -> str:
+        """
+        解析模型路径
+
+        如果模型在本地存在（/app/models/{model_id}），返回完整路径
+        否则返回 model_id，让 ms-swift 从 ModelScope 下载
+
+        Args:
+            model_id: 模型ID（如 Qwen/Qwen2.5-0.6B-Instruct）
+
+        Returns:
+            str: 模型路径或ID
+        """
+        # 如果已经是绝对路径，直接返回
+        if Path(model_id).is_absolute():
+            return model_id
+
+        # 检查本地模型目录
+        local_model_path = MODEL_DIR / model_id
+        if local_model_path.exists() and (local_model_path / "config.json").exists():
+            print(f"[resolve_model_path] 使用本地模型: {local_model_path}")
+            return str(local_model_path)
+
+        # 本地不存在，返回 model_id（ms-swift 会自动下载）
+        print(f"[resolve_model_path] 本地模型不存在，将从 ModelScope 下载: {model_id}")
+        return model_id
 
     def resolve_dataset_path(self, dataset: str) -> str:
         """
@@ -66,6 +94,10 @@ class TrainService:
         Returns:
             list: 训练命令参数列表
         """
+        # 解析模型路径（优先使用本地模型）
+        model_id = config.get('model_id', 'Qwen/Qwen2.5-7B-Instruct')
+        model_path = self.resolve_model_path(model_id)
+
         # 解析数据集路径
         dataset_path = self.resolve_dataset_path(config['dataset'])
 
@@ -76,7 +108,7 @@ class TrainService:
         # 基础命令
         cmd = [
             "swift", "sft",
-            "--model", config.get('model_id', 'Qwen/Qwen2.5-7B-Instruct'),
+            "--model", model_path,
             "--dataset", dataset_path,
             "--output_dir", str(output_dir),
         ]

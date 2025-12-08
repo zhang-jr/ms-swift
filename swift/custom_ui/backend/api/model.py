@@ -58,56 +58,74 @@ def scan_models() -> List[Dict[str, Any]]:
         MODEL_DIR.mkdir(parents=True, exist_ok=True)
         return models
 
-    # 遍历一级子目录
-    all_dirs = list(MODEL_DIR.iterdir())
-    logger.info(f"[scan_models] 目录中的所有项: {[d.name for d in all_dirs]}")
-
-    for model_path in all_dirs:
-        if not model_path.is_dir():
-            continue
-
-        # 检查是否是有效的模型目录（至少包含 config.json）
-        config_file = model_path / "config.json"
-        if not config_file.exists():
-            continue
-
-        # 读取模型配置
-        model_name = model_path.name
-        model_type = "unknown"
-        size = None
+    # 递归扫描子目录（支持 ModelScope 目录结构：models/Author/ModelName）
+    def scan_directory(directory: Path, depth: int = 0, max_depth: int = 3):
+        """递归扫描目录寻找模型"""
+        if depth > max_depth:
+            return
 
         try:
-            with open(config_file, 'r', encoding='utf-8') as f:
-                config = json.load(f)
-                # 尝试从配置中提取模型类型
-                if "model_type" in config:
-                    model_type = config["model_type"]
-                elif "architectures" in config and config["architectures"]:
-                    model_type = config["architectures"][0]
-        except Exception:
-            pass
+            for item in directory.iterdir():
+                if not item.is_dir():
+                    continue
 
-        # 计算模型大小（目录大小）
-        try:
-            total_size = sum(f.stat().st_size for f in model_path.rglob('*') if f.is_file())
-            size_gb = total_size / (1024 ** 3)
-            if size_gb >= 1:
-                size = f"{size_gb:.1f}GB"
-            else:
-                size = f"{total_size / (1024 ** 2):.0f}MB"
-        except Exception:
-            pass
+                # 检查是否是有效的模型目录（至少包含 config.json）
+                config_file = item / "config.json"
+                if config_file.exists():
+                    # 找到有效模型
+                    # 计算相对于 MODEL_DIR 的路径，用作 model_id（如 Qwen/Qwen2.5-0.6B-Instruct）
+                    try:
+                        relative_path = item.relative_to(MODEL_DIR)
+                        model_id = str(relative_path).replace('\\', '/')  # 统一使用 / 分隔符
+                        model_name = item.name
+                        model_type = "unknown"
+                        size = None
 
-        logger.info(f"[scan_models] 找到有效模型: {model_name}")
+                        # 读取模型配置
+                        try:
+                            with open(config_file, 'r', encoding='utf-8') as f:
+                                config = json.load(f)
+                                # 尝试从配置中提取模型类型
+                                if "model_type" in config:
+                                    model_type = config["model_type"]
+                                elif "architectures" in config and config["architectures"]:
+                                    model_type = config["architectures"][0]
+                        except Exception as e:
+                            logger.warning(f"[scan_models] 读取配置失败: {config_file}, 错误: {e}")
 
-        models.append({
-            "model_id": str(model_path),
-            "model_name": model_name,
-            "model_type": model_type,
-            "size": size,
-            "description": f"本地模型: {model_name}",
-            "tags": ["local"]
-        })
+                        # 计算模型大小（目录大小）
+                        try:
+                            total_size = sum(f.stat().st_size for f in item.rglob('*') if f.is_file())
+                            size_gb = total_size / (1024 ** 3)
+                            if size_gb >= 1:
+                                size = f"{size_gb:.1f}GB"
+                            else:
+                                size = f"{total_size / (1024 ** 2):.0f}MB"
+                        except Exception as e:
+                            logger.warning(f"[scan_models] 计算大小失败: {item}, 错误: {e}")
+
+                        logger.info(f"[scan_models] 找到有效模型: {model_id} (名称: {model_name})")
+
+                        models.append({
+                            "model_id": model_id,  # 使用相对路径作为 ID（如 Qwen/Qwen2.5-0.6B-Instruct）
+                            "model_name": model_name,
+                            "model_type": model_type,
+                            "size": size,
+                            "description": f"本地模型: {model_id}",
+                            "tags": ["local"]
+                        })
+                    except Exception as e:
+                        logger.error(f"[scan_models] 处理模型失败: {item}, 错误: {e}")
+                else:
+                    # 继续递归扫描子目录
+                    scan_directory(item, depth + 1, max_depth)
+        except PermissionError as e:
+            logger.warning(f"[scan_models] 权限不足，跳过目录: {directory}, 错误: {e}")
+        except Exception as e:
+            logger.error(f"[scan_models] 扫描目录失败: {directory}, 错误: {e}")
+
+    # 开始扫描
+    scan_directory(MODEL_DIR)
 
     logger.info(f"[scan_models] 扫描完成，共找到 {len(models)} 个模型")
     return models
