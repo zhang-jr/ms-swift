@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Card,
@@ -50,9 +50,24 @@ const TrainPage = () => {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [datasets, setDatasets] = useState<DatasetInfo[]>([])
 
-  // 加载模型和数据集列表
+  // 使用 useRef 存储 WebSocket 和轮询引用（不会触发重新渲染）
+  const wsRef = useRef<WebSocket | null>(null)
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  // 组件挂载时：加载数据 + 检查正在运行的任务
   useEffect(() => {
     loadModelsAndDatasets()
+    checkRunningTasks()
+
+    // 组件卸载时清理
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close()
+      }
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current)
+      }
+    }
   }, [])
 
   const loadModelsAndDatasets = async () => {
@@ -82,6 +97,53 @@ const TrainPage = () => {
     }
   }
 
+  // 检查是否有正在运行的任务（页面刷新/路由切换后恢复状态）
+  const checkRunningTasks = async () => {
+    try {
+      console.log('检查正在运行的任务...')
+      const response = await trainAPI.listTasks()
+      const tasks = (response as any).tasks || []
+
+      // 查找正在运行的任务
+      const runningTask = tasks.find((task: TrainStatus) =>
+        task.status === 'running' || task.status === 'pending'
+      )
+
+      if (runningTask) {
+        console.log('发现正在运行的任务:', runningTask.task_id)
+        setCurrentTask(runningTask)
+        setTraining(true)
+
+        // 恢复轮询
+        startPolling(runningTask.task_id)
+
+        // 重新连接 WebSocket
+        reconnectWebSocket(runningTask.task_id)
+
+        message.info(`已恢复训练任务: ${runningTask.task_id.slice(0, 8)}...`)
+      } else {
+        console.log('没有正在运行的任务')
+      }
+    } catch (error: any) {
+      console.error('检查运行任务失败:', error)
+      // 不显示错误消息，静默失败
+    }
+  }
+
+  // 重新连接 WebSocket
+  const reconnectWebSocket = (taskId: string) => {
+    // 关闭旧连接
+    if (wsRef.current) {
+      wsRef.current.close()
+    }
+
+    // 建立新连接
+    const ws = connectTrainLogs(taskId, (log) => {
+      setLogs((prev) => [...prev, log])
+    })
+    wsRef.current = ws
+  }
+
   // 启动训练
   const handleStartTraining = async (values: TrainRequest) => {
     setLoading(true)
@@ -92,17 +154,13 @@ const TrainPage = () => {
       setLogs([])
 
       // 开始轮询任务状态
-      pollTaskStatus(response.task_id)
+      startPolling(response.task_id)
 
       // 连接 WebSocket 接收实时日志
       const ws = connectTrainLogs(response.task_id, (log) => {
         setLogs((prev) => [...prev, log])
       })
-
-      // 保存 WebSocket 连接以便后续关闭
-      return () => {
-        ws.close()
-      }
+      wsRef.current = ws
     } catch (error: any) {
       message.error(error.message || '启动训练失败')
     } finally {
@@ -110,8 +168,13 @@ const TrainPage = () => {
     }
   }
 
-  // 轮询任务状态
-  const pollTaskStatus = async (taskId: string) => {
+  // 开始轮询任务状态
+  const startPolling = (taskId: string) => {
+    // 清理旧的轮询
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current)
+    }
+
     const interval = setInterval(async () => {
       try {
         const status = await trainAPI.getStatus(taskId)
@@ -119,6 +182,7 @@ const TrainPage = () => {
 
         if (status.status === 'completed' || status.status === 'failed' || status.status === 'stopped') {
           clearInterval(interval)
+          pollIntervalRef.current = null
           setTraining(false)
 
           if (status.status === 'completed') {
@@ -126,11 +190,21 @@ const TrainPage = () => {
           } else if (status.status === 'failed') {
             message.error('训练失败')
           }
+
+          // 关闭 WebSocket
+          if (wsRef.current) {
+            wsRef.current.close()
+            wsRef.current = null
+          }
         }
       } catch (error) {
         clearInterval(interval)
+        pollIntervalRef.current = null
       }
     }, 2000)
+
+    // 保存 interval 引用
+    pollIntervalRef.current = interval
   }
 
   // 停止训练
@@ -141,6 +215,18 @@ const TrainPage = () => {
       await trainAPI.stopTraining(currentTask.task_id)
       message.success('训练已停止')
       setTraining(false)
+
+      // 清理轮询
+      if (pollIntervalRef.current) {
+        clearInterval(pollIntervalRef.current)
+        pollIntervalRef.current = null
+      }
+
+      // 关闭 WebSocket
+      if (wsRef.current) {
+        wsRef.current.close()
+        wsRef.current = null
+      }
     } catch (error: any) {
       message.error(error.message || '停止训练失败')
     }
