@@ -52,7 +52,7 @@ const TrainPage = () => {
 
   // 使用 useRef 存储 WebSocket 和轮询引用（不会触发重新渲染）
   const wsRef = useRef<WebSocket | null>(null)
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const pollIntervalRef = useRef<number | null>(null)
 
   // 组件挂载时：加载数据 + 检查正在运行的任务
   useEffect(() => {
