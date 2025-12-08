@@ -56,11 +56,29 @@ const TrainPage = () => {
 
   // 组件挂载时：加载数据 + 检查正在运行的任务
   useEffect(() => {
-    loadModelsAndDatasets()
-    checkRunningTasks()
+    const initialize = async () => {
+      console.log('[TrainPage] 开始初始化...')
+      setInitialLoading(true)
+      try {
+        // 并行加载数据和检查任务
+        await Promise.allSettled([
+          loadModelsAndDatasets(),
+          checkRunningTasks()
+        ])
+        console.log('[TrainPage] 初始化完成')
+      } catch (error) {
+        console.error('[TrainPage] 初始化失败:', error)
+      } finally {
+        console.log('[TrainPage] 设置 initialLoading = false')
+        setInitialLoading(false)
+      }
+    }
+
+    initialize()
 
     // 组件卸载时清理
     return () => {
+      console.log('[TrainPage] 组件卸载，清理资源')
       if (wsRef.current) {
         wsRef.current.close()
       }
@@ -71,7 +89,6 @@ const TrainPage = () => {
   }, [])
 
   const loadModelsAndDatasets = async () => {
-    setInitialLoading(true)
     try {
       console.log('开始加载模型和数据集...')
       const [modelsData, datasetsData] = await Promise.all([
@@ -91,9 +108,6 @@ const TrainPage = () => {
       // 错误时也设置为空数组，避免 undefined
       setModels([])
       setDatasets([])
-    } finally {
-      console.log('设置 initialLoading = false')
-      setInitialLoading(false)
     }
   }
 
