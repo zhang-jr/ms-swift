@@ -63,24 +63,56 @@ class FolderPreview(BaseModel):
 
 def get_directory_size(dirpath: Path) -> tuple[int, int]:
     """计算文件夹大小和文件数量"""
+    import traceback
     total_size = 0
     file_count = 0
     try:
         for item in dirpath.rglob('*'):
             if item.is_file():
-                total_size += item.stat().st_size
-                file_count += 1
+                try:
+                    total_size += item.stat().st_size
+                    file_count += 1
+                except PermissionError as pe:
+                    print(f"Permission denied reading file {item}: {pe}")
+                except Exception as e:
+                    print(f"Error reading file {item}: {e}")
+    except PermissionError as pe:
+        print(f"Permission denied accessing directory {dirpath}: {pe}")
+        print(traceback.format_exc())
     except Exception as e:
-        print(f"Warning: Failed to calculate size for {dirpath}: {e}")
+        print(f"Error calculating size for {dirpath}: {e}")
+        print(traceback.format_exc())
     return total_size, file_count
 
 def get_dataset_info(path: Path) -> DatasetInfo:
     """获取数据集信息（支持文件夹和文件）"""
-    stat = path.stat()
+    import traceback
+    try:
+        stat = path.stat()
+        # 打印文件所有者信息（用于调试）
+        try:
+            import pwd
+            owner_info = pwd.getpwuid(stat.st_uid)
+            print(f"Path {path} owner: {owner_info.pw_name} (uid: {stat.st_uid})")
+            current_uid = os.getuid() if hasattr(os, 'getuid') else -1
+            if current_uid >= 0:
+                current_user = pwd.getpwuid(current_uid)
+                print(f"Current user: {current_user.pw_name} (uid: {current_uid})")
+        except:
+            pass  # 忽略无法获取用户信息的情况
+    except PermissionError as pe:
+        print(f"Permission denied reading stat for {path}: {pe}")
+        raise
+    except Exception as e:
+        print(f"Error reading stat for {path}: {e}")
+        print(traceback.format_exc())
+        raise
 
     if path.is_dir():
         # 文件夹模式
+        print(f"Processing directory: {path}")
         total_size, file_count = get_directory_size(path)
+        print(f"Directory {path} - Size: {total_size} bytes, Files: {file_count}")
         return DatasetInfo(
             name=path.name,
             path=str(path.relative_to(DATA_DIR)),
@@ -165,6 +197,13 @@ async def upload_dataset(file: UploadFile = File(...)):
                     )
                 buffer.write(chunk)
 
+        # 设置文件权限为 644 (-rw-r--r--)，确保所有用户都能读取
+        try:
+            os.chmod(filepath, 0o644)
+            print(f"Set file permissions to 644 for {filepath}")
+        except Exception as e:
+            print(f"Warning: Failed to set file permissions: {e}")
+
         return UploadResponse(
             filename=safe_filename,
             filepath=str(filepath.relative_to(DATA_DIR)),
@@ -206,6 +245,13 @@ async def upload_folder(
     try:
         folder_path.mkdir(parents=True, exist_ok=False)
 
+        # 设置文件夹权限为 755 (drwxr-xr-x)，确保所有用户都能读取
+        try:
+            os.chmod(folder_path, 0o755)
+            print(f"Set folder permissions to 755 for {folder_path}")
+        except Exception as e:
+            print(f"Warning: Failed to set folder permissions: {e}")
+
         total_size = 0
         uploaded_files = []
 
@@ -219,6 +265,12 @@ async def upload_folder(
                 while chunk := await file.read(1024 * 1024):
                     file_size += len(chunk)
                     buffer.write(chunk)
+
+            # 设置文件权限为 644 (-rw-r--r--)
+            try:
+                os.chmod(filepath, 0o644)
+            except Exception as e:
+                print(f"Warning: Failed to set file permissions for {filepath}: {e}")
 
             total_size += file_size
             uploaded_files.append(safe_filename)
@@ -248,27 +300,55 @@ async def list_datasets(include_files: bool = False):
     Returns:
         List[DatasetInfo]: 数据集信息列表
     """
+    import traceback
     datasets = []
 
-    for item in DATA_DIR.iterdir():
+    print(f"=== Listing datasets from {DATA_DIR} ===")
+    print(f"Include files: {include_files}")
+
+    try:
+        items = list(DATA_DIR.iterdir())
+        print(f"Found {len(items)} items in {DATA_DIR}")
+    except PermissionError as pe:
+        print(f"Permission denied listing {DATA_DIR}: {pe}")
+        raise HTTPException(status_code=500, detail=f"Permission denied: {pe}")
+    except Exception as e:
+        print(f"Error listing {DATA_DIR}: {e}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"Error listing directory: {e}")
+
+    for item in items:
+        print(f"Processing item: {item} (is_dir: {item.is_dir()}, is_file: {item.is_file()})")
+
         # 默认只扫描文件夹
         if item.is_dir():
             try:
-                datasets.append(get_dataset_info(item))
+                info = get_dataset_info(item)
+                datasets.append(info)
+                print(f"✓ Successfully added directory: {item.name}")
+            except PermissionError as pe:
+                print(f"✗ Permission denied for directory {item}: {pe}")
+                print(traceback.format_exc())
+                continue
             except Exception as e:
-                print(f"Warning: Failed to read directory {item}: {e}")
+                print(f"✗ Failed to read directory {item}: {e}")
+                print(traceback.format_exc())
                 continue
         # 可选：也包含单个文件（用于兼容旧数据）
         elif include_files and item.is_file() and item.suffix.lower() in ALLOWED_EXTENSIONS:
             try:
-                datasets.append(get_dataset_info(item))
+                info = get_dataset_info(item)
+                datasets.append(info)
+                print(f"✓ Successfully added file: {item.name}")
             except Exception as e:
-                print(f"Warning: Failed to read file {item}: {e}")
+                print(f"✗ Failed to read file {item}: {e}")
+                print(traceback.format_exc())
                 continue
 
     # 按修改时间倒序排序
     datasets.sort(key=lambda x: x.modified_at, reverse=True)
 
+    print(f"=== Returning {len(datasets)} datasets ===")
     return datasets
 
 @router.get("/preview-folder/{folder_name}")
