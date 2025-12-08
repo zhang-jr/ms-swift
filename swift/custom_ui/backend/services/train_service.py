@@ -76,7 +76,7 @@ class TrainService:
         # 基础命令
         cmd = [
             "swift", "sft",
-            "--model", config.get('model', 'Qwen/Qwen2.5-7B-Instruct'),
+            "--model", config.get('model_id', 'Qwen/Qwen2.5-7B-Instruct'),
             "--dataset", dataset_path,
             "--output_dir", str(output_dir),
         ]
