@@ -114,18 +114,43 @@ const TrainPage = () => {
   // 检查是否有正在运行的任务（页面刷新/路由切换后恢复状态）
   const checkRunningTasks = async () => {
     try {
-      console.log('检查正在运行的任务...')
+      console.log('[checkRunningTasks] 开始检查正在运行的任务...')
       const response = await trainAPI.listTasks()
+      console.log('[checkRunningTasks] 收到任务列表响应:', response)
+
+      // 防御性检查：确保 response 有效
+      if (!response || typeof response !== 'object') {
+        console.warn('[checkRunningTasks] 响应无效:', response)
+        return
+      }
+
       const tasks = (response as any).tasks || []
+      console.log('[checkRunningTasks] 任务数组:', tasks)
+
+      // 防御性检查：确保 tasks 是数组
+      if (!Array.isArray(tasks)) {
+        console.warn('[checkRunningTasks] tasks 不是数组:', tasks)
+        return
+      }
 
       // 查找正在运行的任务
       const runningTask = tasks.find((task: TrainStatus) =>
         task.status === 'running' || task.status === 'pending'
       )
 
-      if (runningTask) {
-        console.log('发现正在运行的任务:', runningTask.task_id)
-        setCurrentTask(runningTask)
+      if (runningTask && runningTask.task_id) {
+        console.log('[checkRunningTasks] 发现正在运行的任务:', runningTask.task_id)
+
+        // 防御性检查：确保任务数据完整
+        const safeTask = {
+          ...runningTask,
+          progress: runningTask.progress ?? 0,
+          current_epoch: runningTask.current_epoch ?? 0,
+          total_epochs: runningTask.total_epochs ?? 1,
+          loss: runningTask.loss ?? null,
+        }
+
+        setCurrentTask(safeTask)
         setTraining(true)
 
         // 恢复轮询
@@ -136,26 +161,58 @@ const TrainPage = () => {
 
         message.info(`已恢复训练任务: ${runningTask.task_id.slice(0, 8)}...`)
       } else {
-        console.log('没有正在运行的任务')
+        console.log('[checkRunningTasks] 没有正在运行的任务')
       }
     } catch (error: any) {
-      console.error('检查运行任务失败:', error)
+      console.error('[checkRunningTasks] 检查运行任务失败:', error)
       // 不显示错误消息，静默失败
     }
   }
 
   // 重新连接 WebSocket
   const reconnectWebSocket = (taskId: string) => {
+    console.log('[reconnectWebSocket] 重新连接 WebSocket, taskId:', taskId)
+
     // 关闭旧连接
     if (wsRef.current) {
-      wsRef.current.close()
+      console.log('[reconnectWebSocket] 关闭旧的 WebSocket 连接')
+      try {
+        wsRef.current.close()
+      } catch (e) {
+        console.error('[reconnectWebSocket] 关闭 WebSocket 失败:', e)
+      }
+      wsRef.current = null
     }
 
-    // 建立新连接
-    const ws = connectTrainLogs(taskId, (log) => {
-      setLogs((prev) => [...prev, log])
-    })
-    wsRef.current = ws
+    // 延迟建立新连接，避免立即关闭
+    setTimeout(() => {
+      try {
+        console.log('[reconnectWebSocket] 建立新的 WebSocket 连接')
+        const ws = connectTrainLogs(taskId, (log) => {
+          try {
+            // 安全截取日志前100字符用于调试
+            const logPreview = typeof log === 'string' ? log.substring(0, 100) : String(log).substring(0, 100)
+            console.log('[reconnectWebSocket] 收到日志:', logPreview)
+
+            // 确保 log 是字符串
+            const safeLog = typeof log === 'string' ? log : String(log)
+            setLogs((prev) => {
+              try {
+                return [...prev, safeLog]
+              } catch (e) {
+                console.error('[reconnectWebSocket] 添加日志到状态失败:', e)
+                return prev
+              }
+            })
+          } catch (e) {
+            console.error('[reconnectWebSocket] 处理日志消息失败:', e)
+          }
+        })
+        wsRef.current = ws
+      } catch (e) {
+        console.error('[reconnectWebSocket] 建立 WebSocket 连接失败:', e)
+      }
+    }, 100)
   }
 
   // 启动训练
@@ -247,10 +304,17 @@ const TrainPage = () => {
   }
 
   // 加载状态
-  console.log('TrainPage 渲染, initialLoading:', initialLoading, 'models:', models.length, 'datasets:', datasets.length)
+  console.log('[TrainPage] 渲染状态:', {
+    initialLoading,
+    training,
+    hasCurrentTask: !!currentTask,
+    modelsCount: models.length,
+    datasetsCount: datasets.length,
+    logsCount: logs.length
+  })
 
   if (initialLoading) {
-    console.log('显示加载中...')
+    console.log('[TrainPage] 显示加载中...')
     return (
       <div style={{ textAlign: 'center', padding: '100px 0' }}>
         <SyncOutlined spin style={{ fontSize: '48px', color: '#667eea', marginBottom: '16px' }} />
@@ -261,7 +325,7 @@ const TrainPage = () => {
     )
   }
 
-  console.log('显示正常页面')
+  console.log('[TrainPage] 显示正常页面, currentTask:', currentTask?.task_id)
   return (
     <div>
       <Title level={2} style={{ color: '#fff', display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -551,14 +615,14 @@ const TrainPage = () => {
                       background: 'rgba(102, 126, 234, 0.2)',
                       padding: '2px 8px',
                       borderRadius: '4px'
-                    }}>{currentTask.task_id}</Text>
+                    }}>{currentTask.task_id || 'Unknown'}</Text>
                   </Col>
                 </Row>
                 <Row gutter={16}>
                   <Col span={12}>
                     <Statistic
                       title="训练状态"
-                      value={currentTask.status}
+                      value={currentTask.status || 'unknown'}
                       prefix={
                         currentTask.status === 'running' ? <SyncOutlined spin style={{ color: '#667eea' }} /> :
                         currentTask.status === 'completed' ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> :
@@ -570,8 +634,8 @@ const TrainPage = () => {
                   <Col span={12}>
                     <Statistic
                       title="当前轮次"
-                      value={currentTask.current_epoch}
-                      suffix={`/ ${currentTask.total_epochs}`}
+                      value={currentTask.current_epoch ?? 0}
+                      suffix={`/ ${currentTask.total_epochs ?? 1}`}
                       valueStyle={{ fontSize: '16px', color: '#667eea' }}
                     />
                   </Col>
@@ -579,7 +643,7 @@ const TrainPage = () => {
                 <div>
                   <Text type="secondary" style={{ fontSize: '12px' }}>训练进度</Text>
                   <Progress
-                    percent={Math.round(currentTask.progress)}
+                    percent={Math.round(currentTask.progress ?? 0)}
                     strokeColor={{
                       '0%': '#667eea',
                       '100%': '#764ba2',
@@ -588,7 +652,7 @@ const TrainPage = () => {
                     strokeWidth={12}
                   />
                 </div>
-                {currentTask.loss !== null && (
+                {currentTask.loss !== null && currentTask.loss !== undefined && typeof currentTask.loss === 'number' && (
                   <Row gutter={16}>
                     <Col span={24}>
                       <Statistic
