@@ -61,7 +61,9 @@ export const listDatasets = async (includeFiles: boolean = false): Promise<Datas
   const response = await apiClient.get('/data/list', {
     params: { include_files: includeFiles },
   })
-  return response.data
+  // 注意：apiClient 的响应拦截器已经返回了 response.data
+  // 所以这里直接返回 response 即可
+  return response as any
 }
 
 /**
@@ -76,7 +78,7 @@ export const uploadFile = async (file: File): Promise<UploadResponse> => {
       'Content-Type': 'multipart/form-data',
     },
   })
-  return response.data
+  return response as any
 }
 
 /**
@@ -94,7 +96,7 @@ export const uploadFolder = async (files: File[], folderName: string): Promise<U
       'Content-Type': 'multipart/form-data',
     },
   })
-  return response.data
+  return response as any
 }
 
 /**
@@ -102,7 +104,7 @@ export const uploadFolder = async (files: File[], folderName: string): Promise<U
  */
 export const deleteDataset = async (name: string): Promise<{ message: string }> => {
   const response = await apiClient.delete(`/data/delete/${name}`)
-  return response.data
+  return response as any
 }
 
 /**
@@ -110,7 +112,7 @@ export const deleteDataset = async (name: string): Promise<{ message: string }> 
  */
 export const getDatasetInfo = async (name: string): Promise<DatasetInfo> => {
   const response = await apiClient.get(`/data/info/${name}`)
-  return response.data
+  return response as any
 }
 
 /**
@@ -126,7 +128,7 @@ export const downloadDataset = (name: string): string => {
  */
 export const previewFolder = async (folderName: string): Promise<FolderPreview> => {
   const response = await apiClient.get(`/data/preview-folder/${folderName}`)
-  return response.data
+  return response as any
 }
 
 /**
@@ -136,7 +138,7 @@ export const previewDataset = async (filename: string, lines: number = 10): Prom
   const response = await apiClient.get(`/data/preview/${filename}`, {
     params: { lines }
   })
-  return response.data
+  return response as any
 }
 
 export const dataAPI = {
