@@ -62,13 +62,36 @@ manager = ConnectionManager()
 # WebSocket 端点 - 用于实时日志推送
 @app.websocket("/ws/logs/{task_id}")
 async def websocket_endpoint(websocket: WebSocket, task_id: str):
+    print(f"[WebSocket] 接收连接请求: task_id={task_id}")
     await manager.connect(websocket, task_id)
+    print(f"[WebSocket] 连接已建立: task_id={task_id}")
     try:
+        # 保持连接活跃，但不要求客户端发送消息
+        # 客户端只需要接收服务器推送的日志
         while True:
-            # 保持连接，等待客户端消息
-            data = await websocket.receive_text()
-            # 这里可以处理客户端发来的消息
+            try:
+                # 使用 receive_text() 保持连接，但添加超时处理
+                # 如果客户端主动发送消息（如心跳），我们接收它
+                # 如果客户端不发送消息，连接仍然保持以接收服务器推送
+                import asyncio
+                data = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+                print(f"[WebSocket] 收到客户端消息: task_id={task_id}, data={data[:50]}")
+            except asyncio.TimeoutError:
+                # 超时不是错误，只是没有客户端消息
+                # 发送心跳保持连接
+                try:
+                    await websocket.send_text('{"type": "ping"}')
+                except Exception as e:
+                    print(f"[WebSocket] 发送心跳失败: {e}")
+                    break
+            except Exception as e:
+                print(f"[WebSocket] 接收消息出错: {e}")
+                break
     except WebSocketDisconnect:
+        print(f"[WebSocket] 客户端断开连接: task_id={task_id}")
+        manager.disconnect(task_id)
+    except Exception as e:
+        print(f"[WebSocket] 异常断开: task_id={task_id}, error={e}")
         manager.disconnect(task_id)
 
 # API 信息端点（不占用根路径）
