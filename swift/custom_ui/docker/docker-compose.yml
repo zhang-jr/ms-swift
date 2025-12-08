@@ -15,6 +15,8 @@ services:
       - ${MODEL_DIR:-./models}:/app/models
       # 挂载输出目录
       - ${OUTPUT_DIR:-./output}:/app/output
+      # 挂载数据集缓存目录（Apache Arrow 格式缓存）
+      - ${DATASETS_CACHE_DIR:-./datasets_cache}:/app/datasets_cache
       # 挂载配置文件(可选)
       # - ./config:/app/config
     environment:
@@ -29,6 +31,8 @@ services:
       - MODELSCOPE_CACHE=/app/models
       # HuggingFace 缓存目录
       - HF_HOME=/app/models
+      # Datasets 库缓存目录（Apache Arrow 格式，与模型分离）
+      - HF_DATASETS_CACHE=/app/datasets_cache
     deploy:
       resources:
         reservations:
