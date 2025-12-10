@@ -169,8 +169,8 @@ const TrainPage = () => {
     }
   }
 
-  // 重新连接 WebSocket
-  const reconnectWebSocket = (taskId: string) => {
+  // 重新连接 WebSocket（先加载历史日志，再建立 WebSocket）
+  const reconnectWebSocket = async (taskId: string) => {
     console.log('[reconnectWebSocket] 重新连接 WebSocket, taskId:', taskId)
 
     // 关闭旧连接
@@ -184,15 +184,34 @@ const TrainPage = () => {
       wsRef.current = null
     }
 
-    // 延迟建立新连接，避免立即关闭
+    // 步骤 1：先加载历史日志
+    try {
+      console.log('[reconnectWebSocket] 加载历史日志...')
+      const logsData = await trainAPI.getLogs(taskId)
+      console.log(`[reconnectWebSocket] 加载了 ${logsData.total_logs} 条历史日志`)
+
+      // 设置历史日志到状态
+      setLogs(logsData.logs || [])
+    } catch (error) {
+      console.error('[reconnectWebSocket] 加载历史日志失败:', error)
+      // 即使加载历史日志失败，也继续建立 WebSocket 连接
+      setLogs([])
+    }
+
+    // 步骤 2：延迟建立新 WebSocket 连接，接收实时日志
     setTimeout(() => {
       try {
         console.log('[reconnectWebSocket] 建立新的 WebSocket 连接')
         const ws = connectTrainLogs(taskId, (log) => {
           try {
+            // 过滤心跳消息
+            if (log.includes('"type": "ping"')) {
+              return
+            }
+
             // 安全截取日志前100字符用于调试
             const logPreview = typeof log === 'string' ? log.substring(0, 100) : String(log).substring(0, 100)
-            console.log('[reconnectWebSocket] 收到日志:', logPreview)
+            console.log('[reconnectWebSocket] 收到新日志:', logPreview)
 
             // 确保 log 是字符串
             const safeLog = typeof log === 'string' ? log : String(log)
@@ -229,6 +248,10 @@ const TrainPage = () => {
 
       // 连接 WebSocket 接收实时日志
       const ws = connectTrainLogs(response.task_id, (log) => {
+        // 过滤心跳消息
+        if (log.includes('"type": "ping"')) {
+          return
+        }
         setLogs((prev) => [...prev, log])
       })
       wsRef.current = ws

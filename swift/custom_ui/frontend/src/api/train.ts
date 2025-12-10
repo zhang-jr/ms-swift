@@ -26,6 +26,11 @@ export const trainAPI = {
   deleteTask: (taskId: string): Promise<{ message: string; task_id: string }> => {
     return apiClient.delete(`/train/delete/${taskId}`)
   },
+
+  // 获取训练任务的历史日志
+  getLogs: (taskId: string): Promise<{ task_id: string; logs: string[]; total_logs: number }> => {
+    return apiClient.get(`/train/logs/${taskId}`)
+  },
 }
 
 // WebSocket 连接用于实时日志
