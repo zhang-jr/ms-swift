@@ -189,6 +189,31 @@ async def delete_training_task(task_id: str):
 
     return {"message": "任务已删除", "task_id": task_id}
 
+@router.get("/logs/{task_id}")
+async def get_training_logs(task_id: str):
+    """
+    获取训练任务的历史日志
+
+    用于前端重新连接时加载历史日志，避免 WebSocket 断开导致日志丢失
+
+    Args:
+        task_id: 任务 ID
+
+    Returns:
+        dict: 包含日志数组的响应
+    """
+    if task_id not in training_tasks:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    task = training_tasks[task_id]
+    logs = task.get('logs', [])
+
+    return {
+        "task_id": task_id,
+        "logs": logs,
+        "total_logs": len(logs)
+    }
+
 # 暴露任务存储给 WebSocket 和服务层
 def get_task(task_id: str):
     return training_tasks.get(task_id)
