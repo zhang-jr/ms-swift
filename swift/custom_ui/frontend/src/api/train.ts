@@ -31,14 +31,25 @@ export const trainAPI = {
 // WebSocket 连接用于实时日志
 export const connectTrainLogs = (taskId: string, onMessage: (message: string) => void) => {
   const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/logs/${taskId}`
+  console.log(`[WebSocket] 连接到: ${wsUrl}`)
+
   const ws = new WebSocket(wsUrl)
 
+  ws.onopen = () => {
+    console.log(`[WebSocket] 连接已建立: ${taskId}`)
+  }
+
   ws.onmessage = (event) => {
+    console.log(`[WebSocket] 收到消息:`, event.data)
     onMessage(event.data)
   }
 
   ws.onerror = (error) => {
-    console.error('WebSocket error:', error)
+    console.error(`[WebSocket] 错误:`, error)
+  }
+
+  ws.onclose = (event) => {
+    console.log(`[WebSocket] 连接关闭: code=${event.code}, reason=${event.reason}, wasClean=${event.wasClean}`)
   }
 
   return ws
