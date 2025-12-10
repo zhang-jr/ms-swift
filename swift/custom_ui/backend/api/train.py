@@ -57,6 +57,7 @@ class TrainStatus(BaseModel):
     current_epoch: int
     total_epochs: int
     loss: Optional[float]
+    loss_history: List[Dict[str, Any]] = []  # Loss 历史数据 [{"step": 1, "loss": 2.5, "epoch": 0.1}, ...]
     logs: List[str]
     created_at: str
     updated_at: str
@@ -91,6 +92,7 @@ async def start_training(request: TrainRequest, background_tasks: BackgroundTask
         "current_epoch": 0,
         "total_epochs": request.num_train_epochs,
         "loss": None,
+        "loss_history": [],  # Loss 历史数据
         "logs": [],
         "request": request.model_dump(),
         "created_at": datetime.now().isoformat(),

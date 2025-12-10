@@ -245,8 +245,13 @@ class TrainService:
             # 使用异步方式读取进程输出
             loop = asyncio.get_event_loop()
 
+            # 步数计数器（用于 loss 历史记录）
+            step_counter = 0
+
             async def read_stream():
                 """异步读取进程输出流"""
+                nonlocal step_counter
+
                 while True:
                     # 在线程池中执行同步读取操作
                     line = await loop.run_in_executor(None, process.stdout.readline)
@@ -262,6 +267,27 @@ class TrainService:
                     # 解析日志提取进度信息
                     progress_info = self._parse_training_log(line, total_epochs)
                     if progress_info:
+                        # 如果有 loss 数据，添加到 loss_history
+                        if 'loss' in progress_info:
+                            step_counter += 1
+                            task = get_task(task_id)
+                            if task:
+                                if 'loss_history' not in task:
+                                    task['loss_history'] = []
+
+                                # 添加 loss 历史记录
+                                loss_record = {
+                                    'step': step_counter,
+                                    'loss': progress_info['loss'],
+                                    'epoch': progress_info.get('current_epoch', 0),
+                                }
+                                task['loss_history'].append(loss_record)
+
+                                # 限制历史记录数量（最多保留 1000 个点）
+                                if len(task['loss_history']) > 1000:
+                                    task['loss_history'] = task['loss_history'][-1000:]
+
+                        # 更新任务状态
                         update_task(task_id, progress_info)
 
                     # 检查是否被停止
