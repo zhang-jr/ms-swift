@@ -387,7 +387,7 @@ class TrainService:
 
     def stop_training(self, task_id: str) -> bool:
         """
-        停止训练任务
+        停止训练任务（杀死进程树，释放 GPU 显存）
 
         Args:
             task_id: 任务 ID
@@ -398,24 +398,60 @@ class TrainService:
         if task_id in self.running_processes:
             process = self.running_processes[task_id]
             try:
-                # 发送 SIGTERM 信号
-                process.terminate()
+                print(f"[stop_training] 正在停止任务 {task_id}, PID={process.pid}")
 
-                # 等待最多 10 秒
+                # 杀死进程树（包括所有子进程）
+                # 这对于 swift sft 很重要，因为它可能启动多个子进程
+                import psutil
                 try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    # 强制杀死
-                    process.kill()
-                    process.wait()
+                    parent = psutil.Process(process.pid)
+                    children = parent.children(recursive=True)
 
-                # 清理
+                    # 先发送 SIGTERM 给所有进程（优雅退出）
+                    print(f"[stop_training] 发现 {len(children)} 个子进程")
+                    for child in children:
+                        try:
+                            print(f"[stop_training] 终止子进程 PID={child.pid}")
+                            child.terminate()
+                        except psutil.NoSuchProcess:
+                            pass
+
+                    parent.terminate()
+
+                    # 等待最多 10 秒
+                    gone, alive = psutil.wait_procs(children + [parent], timeout=10)
+
+                    # 强制杀死仍然存活的进程
+                    for p in alive:
+                        try:
+                            print(f"[stop_training] 强制杀死进程 PID={p.pid}")
+                            p.kill()
+                        except psutil.NoSuchProcess:
+                            pass
+
+                    print(f"[stop_training] 成功停止任务 {task_id}")
+
+                except psutil.NoSuchProcess:
+                    print(f"[stop_training] 进程 {process.pid} 已不存在")
+                except Exception as e:
+                    print(f"[stop_training] psutil 方法失败，使用 fallback: {e}")
+                    # Fallback: 使用原来的方法
+                    process.terminate()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+
+                # 清理进程引用
                 del self.running_processes[task_id]
                 return True
+
             except Exception as e:
-                print(f"Error stopping training {task_id}: {e}")
+                print(f"[stop_training] 停止训练失败 {task_id}: {e}")
                 return False
 
+        print(f"[stop_training] 任务 {task_id} 不在运行进程列表中")
         return False
 
     def get_running_tasks(self) -> list:

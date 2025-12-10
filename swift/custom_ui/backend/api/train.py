@@ -7,8 +7,12 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import uuid
 from datetime import datetime
+from services.train_service import TrainService
 
 router = APIRouter()
+
+# 全局 TrainService 单例（共享 running_processes）
+train_service = TrainService()
 
 # 请求模型
 class TrainRequest(BaseModel):
@@ -95,9 +99,7 @@ async def start_training(request: TrainRequest, background_tasks: BackgroundTask
 
     training_tasks[task_id] = task
 
-    # 在后台启动训练
-    from services.train_service import TrainService
-    train_service = TrainService()
+    # 在后台启动训练（使用全局单例）
     background_tasks.add_task(train_service.run_training, task_id, request.model_dump())
 
     return TrainResponse(
@@ -127,7 +129,7 @@ async def get_training_status(task_id: str):
 @router.post("/stop/{task_id}")
 async def stop_training(task_id: str):
     """
-    停止训练任务
+    停止训练任务（杀死训练进程并释放显存）
 
     Args:
         task_id: 任务 ID
@@ -142,11 +144,25 @@ async def stop_training(task_id: str):
     if task["status"] not in ["pending", "running"]:
         raise HTTPException(status_code=400, detail="任务无法停止")
 
-    # TODO: 实现实际的停止逻辑
-    task["status"] = "stopped"
-    task["updated_at"] = datetime.now().isoformat()
+    # 调用 TrainService 停止训练进程
+    success = train_service.stop_training(task_id)
 
-    return {"message": "训练任务已停止", "task_id": task_id}
+    if success:
+        # 更新任务状态
+        task["status"] = "stopped"
+        task["updated_at"] = datetime.now().isoformat()
+
+        # 发送停止日志到 WebSocket
+        try:
+            import asyncio
+            from app import manager
+            await manager.send_message(f"[训练已停止] 任务 {task_id} 已被用户手动停止", task_id)
+        except Exception as e:
+            print(f"Failed to send stop log: {e}")
+
+        return {"message": "训练任务已停止", "task_id": task_id}
+    else:
+        raise HTTPException(status_code=500, detail="停止训练失败，进程可能已结束")
 
 @router.get("/list")
 async def list_training_tasks():
