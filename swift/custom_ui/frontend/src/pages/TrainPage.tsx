@@ -34,8 +34,9 @@ import {
 import { trainAPI, connectTrainLogs } from '@/api/train'
 import { modelAPI } from '@/api/model'
 import { dataAPI } from '@/api/data'
-import type { TrainRequest, TrainStatus, ModelInfo } from '@/types'
+import type { TrainRequest, TrainStatus, ModelInfo, LossDataPoint } from '@/types'
 import type { DatasetInfo } from '@/api/data'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
 const { Title, Text, Paragraph } = Typography
 const { Panel } = Collapse
@@ -696,53 +697,130 @@ const TrainPage = () => {
             )}
           </Card>
 
-          {/* 实时日志 */}
+          {/* Loss 曲线图 */}
+          {currentTask && currentTask.loss_history && currentTask.loss_history.length > 0 && (
+            <Card
+              title={<span><ThunderboltOutlined /> Loss 曲线</span>}
+              bordered={false}
+              style={{
+                background: 'linear-gradient(135deg, rgba(118, 75, 162, 0.1) 0%, rgba(102, 126, 234, 0.1) 100%)',
+                marginBottom: 16
+              }}
+            >
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart
+                  data={currentTask.loss_history}
+                  margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(102, 126, 234, 0.2)" />
+                  <XAxis
+                    dataKey="step"
+                    stroke="rgba(255, 255, 255, 0.6)"
+                    label={{ value: 'Step', position: 'insideBottom', offset: -5, fill: 'rgba(255, 255, 255, 0.6)' }}
+                  />
+                  <YAxis
+                    stroke="rgba(255, 255, 255, 0.6)"
+                    label={{ value: 'Loss', angle: -90, position: 'insideLeft', fill: 'rgba(255, 255, 255, 0.6)' }}
+                    domain={['auto', 'auto']}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: 'rgba(10, 14, 39, 0.95)',
+                      border: '1px solid rgba(102, 126, 234, 0.5)',
+                      borderRadius: '8px',
+                      color: '#fff'
+                    }}
+                    formatter={(value: any) => [value.toFixed(4), 'Loss']}
+                    labelFormatter={(label) => `Step: ${label}`}
+                  />
+                  <Legend
+                    wrapperStyle={{ color: 'rgba(255, 255, 255, 0.8)' }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="loss"
+                    stroke="#667eea"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 6, fill: '#667eea' }}
+                    name="Training Loss"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+              <div style={{ textAlign: 'center', marginTop: '8px' }}>
+                <Text type="secondary" style={{ fontSize: '12px' }}>
+                  总共 {currentTask.loss_history.length} 个数据点
+                  {currentTask.loss_history.length > 0 && (
+                    <> · 最新 Loss: <Text strong style={{ color: '#667eea' }}>
+                      {currentTask.loss_history[currentTask.loss_history.length - 1].loss.toFixed(4)}
+                    </Text></>
+                  )}
+                </Text>
+              </div>
+            </Card>
+          )}
+
+          {/* 实时日志（折叠面板） */}
           <Card
-            title={<span style={{ fontFamily: 'monospace' }}>{'>'} 实时日志</span>}
             bordered={false}
             style={{
               background: 'linear-gradient(135deg, rgba(15, 12, 41, 0.6) 0%, rgba(36, 36, 62, 0.6) 100%)'
             }}
           >
-            <div
-              style={{
-                height: '350px',
-                overflow: 'auto',
-                background: 'linear-gradient(180deg, #0a0e27 0%, #1a1a2e 100%)',
-                padding: '16px',
-                borderRadius: '8px',
-                fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-                fontSize: '12px',
-                border: '1px solid rgba(102, 126, 234, 0.3)',
-                boxShadow: 'inset 0 2px 8px rgba(0, 0, 0, 0.6)',
-              }}
+            <Collapse
+              defaultActiveKey={logs.length > 0 ? ['logs'] : []}
+              ghost
+              expandIconPosition="end"
             >
-              {logs.length > 0 ? (
-                logs.map((log, index) => (
-                  <div
-                    key={index}
-                    style={{
-                      color: '#0f0',
-                      marginBottom: '2px',
-                      textShadow: '0 0 5px rgba(0, 255, 0, 0.5)',
-                      lineHeight: '1.5'
-                    }}
-                  >
-                    <span style={{ color: '#667eea', marginRight: '8px' }}>[{index + 1}]</span>
-                    {log}
-                  </div>
-                ))
-              ) : (
-                <div style={{ textAlign: 'center', paddingTop: '100px' }}>
-                  <Text type="secondary" style={{ fontFamily: 'monospace', display: 'block', marginBottom: '8px' }}>
-                    {'>'} 等待日志输出...
-                  </Text>
-                  <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: '11px' }}>
-                    训练开始后将显示实时日志
-                  </Text>
+              <Panel
+                header={
+                  <span style={{ fontFamily: 'monospace', fontSize: '14px' }}>
+                    {'>'} 实时日志 {logs.length > 0 && <Tag color="blue">{logs.length} 行</Tag>}
+                  </span>
+                }
+                key="logs"
+              >
+                <div
+                  style={{
+                    height: '350px',
+                    overflow: 'auto',
+                    background: 'linear-gradient(180deg, #0a0e27 0%, #1a1a2e 100%)',
+                    padding: '16px',
+                    borderRadius: '8px',
+                    fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+                    fontSize: '12px',
+                    border: '1px solid rgba(102, 126, 234, 0.3)',
+                    boxShadow: 'inset 0 2px 8px rgba(0, 0, 0, 0.6)',
+                  }}
+                >
+                  {logs.length > 0 ? (
+                    logs.map((log, index) => (
+                      <div
+                        key={index}
+                        style={{
+                          color: '#0f0',
+                          marginBottom: '2px',
+                          textShadow: '0 0 5px rgba(0, 255, 0, 0.5)',
+                          lineHeight: '1.5'
+                        }}
+                      >
+                        <span style={{ color: '#667eea', marginRight: '8px' }}>[{index + 1}]</span>
+                        {log}
+                      </div>
+                    ))
+                  ) : (
+                    <div style={{ textAlign: 'center', paddingTop: '100px' }}>
+                      <Text type="secondary" style={{ fontFamily: 'monospace', display: 'block', marginBottom: '8px' }}>
+                        {'>'} 等待日志输出...
+                      </Text>
+                      <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: '11px' }}>
+                        训练开始后将显示实时日志
+                      </Text>
+                    </div>
+                  )}
                 </div>
-              )}
-            </div>
+              </Panel>
+            </Collapse>
           </Card>
         </Col>
       </Row>

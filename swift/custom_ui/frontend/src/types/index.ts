@@ -27,6 +27,12 @@ export interface TrainResponse {
   created_at: string
 }
 
+export interface LossDataPoint {
+  step: number
+  loss: number
+  epoch: number
+}
+
 export interface TrainStatus {
   task_id: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'stopped'
@@ -34,6 +40,7 @@ export interface TrainStatus {
   current_epoch: number
   total_epochs: number
   loss: number | null
+  loss_history: LossDataPoint[]
   logs: string[]
   created_at: string
   updated_at: string
