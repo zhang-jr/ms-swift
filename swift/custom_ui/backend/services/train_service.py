@@ -359,16 +359,30 @@ class TrainService:
 
     async def _send_log_to_websocket(self, task_id: str, message: str):
         """
-        通过 WebSocket 发送日志
+        发送日志：保存到任务存储 + 推送到 WebSocket
 
         Args:
             task_id: 任务 ID
             message: 日志消息
         """
+        from api.train import get_task, update_task
+
+        # 1. 保存日志到任务存储（持久化）
+        task = get_task(task_id)
+        if task:
+            if 'logs' not in task:
+                task['logs'] = []
+            task['logs'].append(message)
+            # 限制日志数量，避免内存溢出（最多保留最近 10000 条）
+            if len(task['logs']) > 10000:
+                task['logs'] = task['logs'][-10000:]
+
+        # 2. 通过 WebSocket 实时推送（如果有连接）
         try:
             from app import manager
             await manager.send_message(message, task_id)
         except Exception as e:
+            # WebSocket 推送失败不影响日志保存
             print(f"Failed to send log via WebSocket: {e}")
 
     def stop_training(self, task_id: str) -> bool:
