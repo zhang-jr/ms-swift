@@ -154,57 +154,89 @@ def scan_datasets() -> List[Dict[str, Any]]:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         return datasets
 
-    # 支持的数据集文件格式
-    supported_extensions = {'.jsonl', '.json', '.csv', '.tsv', '.txt'}
+    # 支持的数据集文件格式（参考 HuggingFace/ModelScope 标准）
+    supported_extensions = {
+        # 文本数据格式
+        '.jsonl', '.json', '.csv', '.tsv', '.txt',
+        # Parquet/Arrow 格式（HuggingFace 默认格式）
+        '.parquet', '.pq', '.arrow',
+        # 图像格式（用于多模态数据集）
+        '.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp',
+        # 音频格式（用于语音数据集）
+        '.wav', '.mp3', '.flac', '.ogg',
+        # 视频格式（用于视频数据集）
+        '.mp4', '.avi', '.mov', '.mkv',
+        # 其他常见格式
+        '.pkl', '.pickle', '.npy', '.npz',  # Python 序列化/NumPy 格式
+        '.h5', '.hdf5',  # HDF5 格式
+    }
 
-    # 遍历数据目录中的文件
-    all_files = list(DATA_DIR.iterdir())
-    logger.info(f"[scan_datasets] 目录中的所有项: {[f.name for f in all_files]}")
+    # 递归扫描数据目录（支持多层目录结构，如多模态数据集）
+    def scan_directory(directory: Path, depth: int = 0, max_depth: int = 5):
+        """递归扫描目录寻找数据集文件"""
+        if depth > max_depth:
+            return
 
-    for file_path in all_files:
-        if not file_path.is_file():
-            logger.debug(f"[scan_datasets] 跳过非文件: {file_path.name}")
-            continue
+        try:
+            for item in directory.iterdir():
+                # 递归扫描子目录
+                if item.is_dir():
+                    scan_directory(item, depth + 1, max_depth)
+                    continue
 
-        if file_path.suffix.lower() not in supported_extensions:
-            logger.debug(f"[scan_datasets] 跳过不支持的格式: {file_path.name} (后缀: {file_path.suffix})")
-            continue
+                # 检查文件格式
+                if item.suffix.lower() not in supported_extensions:
+                    continue
 
-        logger.info(f"[scan_datasets] 找到数据集文件: {file_path.name}")
+                logger.info(f"[scan_datasets] 找到数据集文件: {item}")
 
-        # 获取文件信息
-        file_name = file_path.name
-        file_size = file_path.stat().st_size
+                # 计算相对路径（用作 dataset_id）
+                try:
+                    relative_path = item.relative_to(DATA_DIR)
+                    dataset_id = str(relative_path).replace('\\', '/')
+                    file_name = item.name
+                    file_size = item.stat().st_size
 
-        # 尝试统计样本数量（仅对 JSONL 和 CSV 文件）
-        num_samples = None
-        if file_path.suffix.lower() in {'.jsonl', '.csv'}:
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    num_samples = sum(1 for _ in f)
-                # CSV 文件减去表头
-                if file_path.suffix.lower() == '.csv' and num_samples > 0:
-                    num_samples -= 1
-            except Exception:
-                pass
+                    # 尝试统计样本数量（仅对文本格式）
+                    num_samples = None
+                    if item.suffix.lower() in {'.jsonl', '.csv', '.txt', '.tsv'}:
+                        try:
+                            with open(item, 'r', encoding='utf-8') as f:
+                                num_samples = sum(1 for _ in f)
+                            # CSV 文件减去表头
+                            if item.suffix.lower() == '.csv' and num_samples > 0:
+                                num_samples -= 1
+                        except Exception as e:
+                            logger.debug(f"[scan_datasets] 统计行数失败: {item}, 错误: {e}")
 
-        # 格式化文件大小
-        if file_size >= 1024 ** 3:
-            size_str = f"{file_size / (1024 ** 3):.2f}GB"
-        elif file_size >= 1024 ** 2:
-            size_str = f"{file_size / (1024 ** 2):.2f}MB"
-        elif file_size >= 1024:
-            size_str = f"{file_size / 1024:.2f}KB"
-        else:
-            size_str = f"{file_size}B"
+                    # 格式化文件大小
+                    if file_size >= 1024 ** 3:
+                        size_str = f"{file_size / (1024 ** 3):.2f}GB"
+                    elif file_size >= 1024 ** 2:
+                        size_str = f"{file_size / (1024 ** 2):.2f}MB"
+                    elif file_size >= 1024:
+                        size_str = f"{file_size / 1024:.2f}KB"
+                    else:
+                        size_str = f"{file_size}B"
 
-        datasets.append({
-            "dataset_id": file_name,
-            "dataset_name": file_name,
-            "description": f"文件大小: {size_str}",
-            "num_samples": num_samples,
-            "tags": [file_path.suffix.lower().replace('.', '')]
-        })
+                    # 添加到数据集列表
+                    datasets.append({
+                        "dataset_id": dataset_id,  # 相对路径（如 folder/data.jsonl）
+                        "dataset_name": file_name,  # 文件名
+                        "description": f"文件大小: {size_str}, 路径: {dataset_id}",
+                        "num_samples": num_samples,
+                        "tags": [item.suffix.lower().replace('.', '')]
+                    })
+                except Exception as e:
+                    logger.error(f"[scan_datasets] 处理文件失败: {item}, 错误: {e}")
+
+        except PermissionError as e:
+            logger.warning(f"[scan_datasets] 权限不足，跳过目录: {directory}, 错误: {e}")
+        except Exception as e:
+            logger.error(f"[scan_datasets] 扫描目录失败: {directory}, 错误: {e}")
+
+    # 开始递归扫描
+    scan_directory(DATA_DIR)
 
     logger.info(f"[scan_datasets] 扫描完成，共找到 {len(datasets)} 个数据集")
     return datasets

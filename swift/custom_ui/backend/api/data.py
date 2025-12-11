@@ -19,8 +19,14 @@ router = APIRouter()
 DATA_DIR = Path("/app/data")
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# 支持的文件格式
-ALLOWED_EXTENSIONS = {".csv", ".jsonl", ".json", ".txt", ".tsv"}
+# Web 上传支持的文件格式（文本和结构化数据）
+# 注意：大文件（图片、音频、视频）建议通过 Docker volume 或文件夹上传
+ALLOWED_EXTENSIONS = {
+    # 文本数据格式
+    ".csv", ".jsonl", ".json", ".txt", ".tsv",
+    # Parquet/Arrow 格式（HuggingFace 默认格式）
+    ".parquet", ".pq", ".arrow",
+}
 MAX_FILE_SIZE = 1024 * 1024 * 1024  # 1GB
 
 class DatasetInfo(BaseModel):
@@ -472,6 +478,36 @@ async def preview_dataset(filename: str, rows: int = 10):
                         preview_data.append({"text": line.strip()})
                     total_rows = i + 1
             columns = ["text"]
+
+        elif file_ext in [".parquet", ".pq"]:
+            # Parquet 格式支持（HuggingFace 默认格式）
+            try:
+                import pandas as pd
+                df = pd.read_parquet(filepath)
+                total_rows = len(df)
+                columns = df.columns.tolist()
+                preview_data = df.head(rows).to_dict('records')
+            except ImportError:
+                raise HTTPException(
+                    status_code=500,
+                    detail="预览 Parquet 文件需要安装 pandas 和 pyarrow: pip install pandas pyarrow"
+                )
+
+        elif file_ext == ".arrow":
+            # Arrow 格式支持
+            try:
+                import pyarrow as pa
+                import pyarrow.parquet as pq
+                table = pq.read_table(filepath)
+                df = table.to_pandas()
+                total_rows = len(df)
+                columns = df.columns.tolist()
+                preview_data = df.head(rows).to_dict('records')
+            except ImportError:
+                raise HTTPException(
+                    status_code=500,
+                    detail="预览 Arrow 文件需要安装 pyarrow: pip install pyarrow"
+                )
 
         else:
             raise HTTPException(status_code=400, detail="不支持预览此文件格式")
