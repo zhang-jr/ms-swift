@@ -83,7 +83,8 @@ export const connectTrainLogs = (
     return ws
   }
 
-  const initialWs = connect()
+  // 初始化连接
+  connect()
 
   // 返回一个带 close 方法的对象，用于手动关闭连接
   return {
