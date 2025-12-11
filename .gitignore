@@ -164,3 +164,4 @@ swift/custom_ui/docker/output/
 # Temporary files
 *_tmp.*
 *.tmp
+train_ui.png

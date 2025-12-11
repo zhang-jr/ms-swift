@@ -620,7 +620,7 @@ const TrainPage = () => {
                 </div>
               </Form.Item>
 
-              <Collapse defaultActiveKey={['basic']} ghost>
+              <Collapse defaultActiveKey={[]} ghost>
                 <Panel header="基础参数" key="basic">
                   <Form.Item label="训练类型" name="train_type">
                     <Select>
@@ -874,67 +874,58 @@ const TrainPage = () => {
             </Card>
           )}
 
-          {/* 实时日志（折叠面板） */}
+          {/* 实时日志 */}
           <Card
+            title={
+              <span>
+                {'>'} 实时日志 {logs.length > 0 && <Tag color="blue">{logs.length} 行</Tag>}
+              </span>
+            }
             bordered={false}
             style={{
               background: 'linear-gradient(135deg, rgba(15, 12, 41, 0.6) 0%, rgba(36, 36, 62, 0.6) 100%)'
             }}
           >
-            <Collapse
-              defaultActiveKey={logs.length > 0 ? ['logs'] : []}
-              ghost
-              expandIconPosition="end"
+            <div
+              style={{
+                height: '350px',
+                overflow: 'auto',
+                background: 'linear-gradient(180deg, #0a0e27 0%, #1a1a2e 100%)',
+                padding: '16px',
+                borderRadius: '8px',
+                fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+                fontSize: '12px',
+                border: '1px solid rgba(102, 126, 234, 0.3)',
+                boxShadow: 'inset 0 2px 8px rgba(0, 0, 0, 0.6)',
+              }}
+              className="custom-scrollbar"
             >
-              <Panel
-                header={
-                  <span>
-                    {'>'} 实时日志 {logs.length > 0 && <Tag color="blue">{logs.length} 行</Tag>}
-                  </span>
-                }
-                key="logs"
-              >
-                <div
-                  style={{
-                    height: '350px',
-                    overflow: 'auto',
-                    background: 'linear-gradient(180deg, #0a0e27 0%, #1a1a2e 100%)',
-                    padding: '16px',
-                    borderRadius: '8px',
-                    fontFamily: 'Consolas, Monaco, "Courier New", monospace',
-                    fontSize: '12px',
-                    border: '1px solid rgba(102, 126, 234, 0.3)',
-                    boxShadow: 'inset 0 2px 8px rgba(0, 0, 0, 0.6)',
-                  }}
-                >
-                  {logs.length > 0 ? (
-                    logs.map((log, index) => (
-                      <div
-                        key={index}
-                        style={{
-                          color: '#0f0',
-                          marginBottom: '2px',
-                          textShadow: '0 0 5px rgba(0, 255, 0, 0.5)',
-                          lineHeight: '1.5'
-                        }}
-                      >
-                        <span style={{ color: '#667eea', marginRight: '8px' }}>[{index + 1}]</span>
-                        {log}
-                      </div>
-                    ))
-                  ) : (
-                    <div style={{ textAlign: 'center', paddingTop: '100px' }}>
-                      <Text type="secondary" style={{ fontFamily: 'monospace', display: 'block', marginBottom: '8px' }}>
-                        {'>'} 等待日志输出...
-                      </Text>
-                      <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: '11px' }}>
-                        训练开始后将显示实时日志
-                      </Text>
-                    </div>
-                  )}
+              {logs.length > 0 ? (
+                logs.map((log, index) => (
+                  <div
+                    key={index}
+                    style={{
+                      color: '#0f0',
+                      marginBottom: '2px',
+                      textShadow: '0 0 5px rgba(0, 255, 0, 0.5)',
+                      lineHeight: '1.5'
+                    }}
+                  >
+                    <span style={{ color: '#667eea', marginRight: '8px' }}>[{index + 1}]</span>
+                    {log}
+                  </div>
+                ))
+              ) : (
+                <div style={{ textAlign: 'center', paddingTop: '100px' }}>
+                  <Text type="secondary" style={{ fontFamily: 'monospace', display: 'block', marginBottom: '8px' }}>
+                    {'>'} 等待日志输出...
+                  </Text>
+                  <Text type="secondary" style={{ fontFamily: 'monospace', fontSize: '11px' }}>
+                    训练开始后将显示实时日志
+                  </Text>
                 </div>
-              </Panel>
-            </Collapse>
+              )}
+            </div>
           </Card>
         </Col>
       </Row>
