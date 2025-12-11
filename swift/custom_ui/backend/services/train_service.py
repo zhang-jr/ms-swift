@@ -98,8 +98,23 @@ class TrainService:
         model_id = config.get('model_id', 'Qwen/Qwen2.5-7B-Instruct')
         model_path = self.resolve_model_path(model_id)
 
-        # 解析数据集路径
-        dataset_path = self.resolve_dataset_path(config['dataset'])
+        # 解析数据集路径（支持多个数据集）
+        datasets_config = config.get('datasets', [])
+        if not datasets_config:
+            raise ValueError("至少需要指定一个数据集")
+
+        dataset_args = []
+        for ds in datasets_config:
+            # 解析数据集路径
+            dataset_name = ds.get('name') if isinstance(ds, dict) else ds
+            dataset_path = self.resolve_dataset_path(dataset_name)
+
+            # 添加采样数量（如果指定）
+            sample_count = ds.get('sample_count') if isinstance(ds, dict) else None
+            if sample_count and sample_count > 0:
+                dataset_args.append(f"{dataset_path}#{sample_count}")
+            else:
+                dataset_args.append(dataset_path)
 
         # 输出目录
         output_dir = OUTPUT_DIR / task_id
@@ -109,9 +124,12 @@ class TrainService:
         cmd = [
             "swift", "sft",
             "--model", model_path,
-            "--dataset", dataset_path,
             "--output_dir", str(output_dir),
         ]
+
+        # 添加多个数据集参数
+        cmd.append("--dataset")
+        cmd.extend(dataset_args)
 
         # 训练类型（lora/full）
         train_type = config.get('train_type', 'lora')

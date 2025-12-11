@@ -1,8 +1,14 @@
+// 数据集配置类型
+export interface DatasetConfig {
+  name: string  // 数据集名称或路径
+  sample_count?: number  // 采样数量（可选，例如 500）
+}
+
 // 训练相关类型
 export interface TrainRequest {
   model_id: string
   model_type?: string
-  dataset: string
+  datasets: DatasetConfig[]  // 支持多个数据集
   train_type?: string
   lora_rank?: number
   lora_alpha?: number

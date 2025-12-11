@@ -14,12 +14,19 @@ router = APIRouter()
 # 全局 TrainService 单例（共享 running_processes）
 train_service = TrainService()
 
+# 数据集配置模型
+class DatasetConfig(BaseModel):
+    """单个数据集的配置"""
+    name: str  # 数据集名称或路径
+    sample_count: Optional[int] = None  # 采样数量（可选，例如 500）
+
 # 请求模型
 class TrainRequest(BaseModel):
     model_id: str
     model_type: str = "qwen-7b-chat"
-    # 数据集：可以是上传的文件名（自动从 /app/data 读取）或完整路径
-    dataset: str
+    # 数据集配置：支持多个数据集，每个可以设置采样数量
+    # 示例: [{"name": "dataset1", "sample_count": 500}, {"name": "dataset2"}]
+    datasets: List[DatasetConfig]
     train_type: str = "lora"
 
     # LoRA 参数

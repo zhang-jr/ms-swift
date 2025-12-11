@@ -51,6 +51,9 @@ const TrainPage = () => {
   const [models, setModels] = useState<ModelInfo[]>([])
   const [datasets, setDatasets] = useState<DatasetInfo[]>([])
 
+  // 选中的数据集配置（支持多选 + 采样）
+  const [selectedDatasets, setSelectedDatasets] = useState<Record<string, number | undefined>>({})
+
   // 使用 useRef 存储 WebSocket 和轮询引用（不会触发重新渲染）
   const wsRef = useRef<{ close: () => void; readyState: number } | null>(null)
   const pollIntervalRef = useRef<number | null>(null)
@@ -236,10 +239,27 @@ const TrainPage = () => {
   }
 
   // 启动训练
-  const handleStartTraining = async (values: TrainRequest) => {
+  const handleStartTraining = async (values: any) => {
+    // 验证数据集选择
+    if (Object.keys(selectedDatasets).length === 0) {
+      message.error('请至少选择一个数据集')
+      return
+    }
+
+    // 转换数据集配置为后端格式
+    const datasets = Object.entries(selectedDatasets).map(([name, sample_count]) => ({
+      name,
+      sample_count: sample_count || undefined
+    }))
+
     setLoading(true)
     try {
-      const response = await trainAPI.startTraining(values)
+      const requestData: TrainRequest = {
+        ...values,
+        datasets  // 替换为多数据集配置
+      }
+
+      const response = await trainAPI.startTraining(requestData)
       message.success('训练任务已启动')
       setTraining(true)
       setLogs([])
@@ -462,48 +482,125 @@ const TrainPage = () => {
               </Form.Item>
 
               <Form.Item
-                label="数据集文件夹"
-                name="dataset"
-                rules={[{ required: true, message: '请选择数据集文件夹' }]}
-                tooltip="选择已上传的数据集文件夹，系统会自动从 /app/data/{folder_name} 读取训练数据"
+                label="数据集配置"
+                tooltip="支持多个数据集混合训练，可为每个数据集设置采样数量（例如 #500 表示采样 500 条）"
+                required
               >
-                <Select
-                  showSearch
-                  placeholder="选择数据集文件夹"
-                  filterOption={(input, option) =>
-                    (option?.value ?? '').toLowerCase().includes(input.toLowerCase())
-                  }
-                  options={(datasets || [])
-                    .filter((d) => d.is_directory) // 只显示文件夹
-                    .map((d) => ({
-                      label: (
-                        <Space>
-                          <FolderOutlined />
-                          {d.name}
-                          <Tag color="blue" style={{ marginLeft: 8 }}>
-                            {d.file_count || 0} 个文件
-                          </Tag>
-                          <span style={{ color: 'rgba(255, 255, 255, 0.45)', fontSize: '12px' }}>
-                            {d.size_mb.toFixed(2)} MB
-                          </span>
-                        </Space>
-                      ),
-                      value: d.name,
-                    }))}
-                  notFoundContent={
-                    <div style={{ textAlign: 'center', padding: '20px' }}>
-                      <FolderOutlined style={{ fontSize: '24px', color: 'rgba(255, 255, 255, 0.25)' }} />
-                      <div style={{ marginTop: '8px', color: 'rgba(255, 255, 255, 0.45)' }}>
-                        暂无数据集文件夹
+                {(datasets || []).filter((d) => d.is_directory).length === 0 ? (
+                  <Alert
+                    message="暂无数据集"
+                    description={
+                      <>
+                        请先到{' '}
+                        <Link to="/data" style={{ color: '#667eea' }}>
+                          <DatabaseOutlined /> 数据管理
+                        </Link>{' '}
+                        页面上传训练数据集文件夹
+                      </>
+                    }
+                    type="warning"
+                    showIcon
+                    icon={<FolderOutlined />}
+                  />
+                ) : (
+                  <div
+                    style={{
+                      border: '1px solid rgba(102, 126, 234, 0.3)',
+                      borderRadius: '8px',
+                      padding: '12px',
+                      background: 'rgba(102, 126, 234, 0.05)',
+                      maxHeight: '300px',
+                      overflow: 'auto'
+                    }}
+                  >
+                    {(datasets || [])
+                      .filter((d) => d.is_directory)
+                      .map((dataset) => {
+                        const isSelected = dataset.name in selectedDatasets
+                        return (
+                          <Row
+                            key={dataset.name}
+                            gutter={[16, 8]}
+                            style={{
+                              padding: '8px',
+                              borderRadius: '4px',
+                              background: isSelected ? 'rgba(102, 126, 234, 0.1)' : 'transparent',
+                              marginBottom: '8px'
+                            }}
+                          >
+                            <Col span={14}>
+                              <label
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  cursor: 'pointer',
+                                  gap: '8px'
+                                }}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedDatasets({ ...selectedDatasets, [dataset.name]: undefined })
+                                    } else {
+                                      const newSelected = { ...selectedDatasets }
+                                      delete newSelected[dataset.name]
+                                      setSelectedDatasets(newSelected)
+                                    }
+                                  }}
+                                  style={{ cursor: 'pointer' }}
+                                />
+                                <FolderOutlined style={{ color: '#667eea' }} />
+                                <span style={{ fontWeight: isSelected ? 'bold' : 'normal' }}>
+                                  {dataset.name}
+                                </span>
+                                <Tag color="blue">{dataset.file_count || 0} 个文件</Tag>
+                                <span style={{ color: 'rgba(255, 255, 255, 0.45)', fontSize: '12px' }}>
+                                  {dataset.size_mb.toFixed(2)} MB
+                                </span>
+                              </label>
+                            </Col>
+                            <Col span={10}>
+                              {isSelected && (
+                                <InputNumber
+                                  placeholder="采样数量（可选）"
+                                  min={1}
+                                  value={selectedDatasets[dataset.name]}
+                                  onChange={(value) => {
+                                    setSelectedDatasets({
+                                      ...selectedDatasets,
+                                      [dataset.name]: value || undefined
+                                    })
+                                  }}
+                                  style={{ width: '100%' }}
+                                  addonAfter="条"
+                                />
+                              )}
+                            </Col>
+                          </Row>
+                        )
+                      })}
+                    {Object.keys(selectedDatasets).length === 0 && (
+                      <div style={{ textAlign: 'center', padding: '20px', color: 'rgba(255, 255, 255, 0.45)' }}>
+                        请至少选择一个数据集
                       </div>
-                      <Link to="/data">
-                        <Button type="link" size="small">
-                          去上传
-                        </Button>
-                      </Link>
-                    </div>
-                  }
-                />
+                    )}
+                  </div>
+                )}
+                <div style={{ marginTop: '8px', color: 'rgba(255, 255, 255, 0.65)', fontSize: '12px' }}>
+                  已选择 {Object.keys(selectedDatasets).length} 个数据集
+                  {Object.keys(selectedDatasets).length > 0 && (
+                    <>
+                      {' · '}
+                      <Text style={{ color: '#667eea', fontSize: '12px' }}>
+                        {Object.entries(selectedDatasets).map(([name, count]) =>
+                          count ? `${name}#${count}` : name
+                        ).join(', ')}
+                      </Text>
+                    </>
+                  )}
+                </div>
               </Form.Item>
 
               <Collapse defaultActiveKey={[]} ghost>
