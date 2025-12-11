@@ -34,7 +34,7 @@ import {
 import { trainAPI, connectTrainLogs } from '@/api/train'
 import { modelAPI } from '@/api/model'
 import { dataAPI } from '@/api/data'
-import type { TrainRequest, TrainStatus, ModelInfo, LossDataPoint } from '@/types'
+import type { TrainRequest, TrainStatus, ModelInfo } from '@/types'
 import type { DatasetInfo } from '@/api/data'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 
