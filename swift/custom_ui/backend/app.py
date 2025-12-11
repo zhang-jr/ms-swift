@@ -90,18 +90,27 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
     print(f"[WebSocket] 连接已建立: task_id={task_id}")
 
     try:
-        # 纯推送模式：保持连接打开，直到客户端断开或发生错误
-        # 不主动接收客户端消息，避免 receive_text() 阻塞导致的超时问题
+        # 纯推送模式：监听客户端断开，服务器只推送日志
+        # 使用 receive() 来检测客户端断开（会在客户端关闭时立即返回）
         # 服务器端通过 manager.send_message() 推送日志
         while True:
-            # 每 30 秒发送一次心跳，保持连接活跃
+            # 等待客户端消息或断开事件
+            # 客户端不会主动发送消息，所以这里只是用来检测断开
             import asyncio
-            await asyncio.sleep(30)
             try:
-                await websocket.send_text('{"type": "ping"}')
-            except Exception as e:
-                print(f"[WebSocket] 发送心跳失败: {e}")
-                break
+                # 添加超时，避免无限等待，同时用于发送心跳
+                message = await asyncio.wait_for(websocket.receive(), timeout=30.0)
+                # 检查是否是断开消息
+                if message.get("type") == "websocket.disconnect":
+                    print(f"[WebSocket] 检测到客户端断开: task_id={task_id}")
+                    break
+            except asyncio.TimeoutError:
+                # 超时后发送心跳保持连接
+                try:
+                    await websocket.send_text('{"type": "ping"}')
+                except Exception:
+                    # 发送失败说明连接已断开，静默退出
+                    break
 
     except WebSocketDisconnect:
         print(f"[WebSocket] 客户端断开连接: task_id={task_id}")
