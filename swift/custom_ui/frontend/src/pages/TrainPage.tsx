@@ -774,7 +774,7 @@ const TrainPage = () => {
             >
               <Panel
                 header={
-                  <span style={{ fontFamily: 'monospace', fontSize: '14px' }}>
+                  <span>
                     {'>'} 实时日志 {logs.length > 0 && <Tag color="blue">{logs.length} 行</Tag>}
                   </span>
                 }
