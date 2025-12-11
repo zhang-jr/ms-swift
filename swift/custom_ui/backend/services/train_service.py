@@ -407,9 +407,10 @@ class TrainService:
         try:
             from app import manager
             await manager.send_message(message, task_id)
-        except Exception as e:
+        except Exception:
             # WebSocket 推送失败不影响日志保存
-            print(f"Failed to send log via WebSocket: {e}")
+            # ConnectionManager 已经自动处理连接清理，无需打印错误
+            pass
 
     def stop_training(self, task_id: str) -> bool:
         """

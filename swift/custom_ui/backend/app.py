@@ -50,12 +50,35 @@ class ConnectionManager:
             del self.active_connections[client_id]
 
     async def send_message(self, message: str, client_id: str):
+        """
+        发送消息到指定客户端
+        如果发送失败（WebSocket 已关闭），自动清理连接
+        """
         if client_id in self.active_connections:
-            await self.active_connections[client_id].send_text(message)
+            websocket = self.active_connections[client_id]
+            try:
+                await websocket.send_text(message)
+            except Exception as e:
+                # WebSocket 已关闭或出错，自动清理连接
+                # 这是正常情况（用户切换页面等），不打印错误日志
+                self.disconnect(client_id)
 
     async def broadcast(self, message: str):
-        for connection in self.active_connections.values():
-            await connection.send_text(message)
+        """
+        广播消息到所有客户端
+        自动清理失败的连接
+        """
+        disconnected_clients = []
+        for client_id, websocket in self.active_connections.items():
+            try:
+                await websocket.send_text(message)
+            except Exception:
+                # 记录需要清理的连接
+                disconnected_clients.append(client_id)
+
+        # 清理失败的连接
+        for client_id in disconnected_clients:
+            self.disconnect(client_id)
 
 manager = ConnectionManager()
 
