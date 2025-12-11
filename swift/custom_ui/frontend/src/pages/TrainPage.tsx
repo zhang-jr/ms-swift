@@ -439,13 +439,23 @@ const TrainPage = () => {
 
           {/* 训练配置 */}
           <Card
-            title={<span><ThunderboltOutlined /> 训练配置</span>}
+            title={
+              <Space>
+                <ThunderboltOutlined /> 训练配置
+                {training && (
+                  <Tag color="orange" icon={<SyncOutlined spin />}>
+                    训练中 - 配置已锁定
+                  </Tag>
+                )}
+              </Space>
+            }
             bordered={false}
           >
             <Form
               form={form}
               layout="vertical"
               onFinish={handleStartTraining}
+              disabled={training}
               initialValues={{
                 train_type: 'lora',
                 lora_rank: 8,
@@ -532,15 +542,16 @@ const TrainPage = () => {
                               border: `1px solid ${isSelected ? 'rgba(102, 126, 234, 0.4)' : 'transparent'}`,
                               marginBottom: '8px',
                               transition: 'all 0.2s ease',
-                              cursor: 'pointer'
+                              cursor: training ? 'not-allowed' : 'pointer',
+                              opacity: training ? 0.6 : 1
                             }}
                             onMouseEnter={(e) => {
-                              if (!isSelected) {
+                              if (!isSelected && !training) {
                                 e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'
                               }
                             }}
                             onMouseLeave={(e) => {
-                              if (!isSelected) {
+                              if (!isSelected && !training) {
                                 e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'
                               }
                             }}
@@ -549,6 +560,7 @@ const TrainPage = () => {
                               <Col flex="auto">
                                 <Checkbox
                                   checked={isSelected}
+                                  disabled={training}
                                   onChange={(e) => {
                                     if (e.target.checked) {
                                       setSelectedDatasets({ ...selectedDatasets, [dataset.name]: undefined })
@@ -581,6 +593,7 @@ const TrainPage = () => {
                                   <InputNumber
                                     placeholder="采样数量"
                                     min={1}
+                                    disabled={training}
                                     value={selectedDatasets[dataset.name]}
                                     onChange={(value) => {
                                       setSelectedDatasets({
