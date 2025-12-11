@@ -323,6 +323,13 @@ class TrainService:
             if task_id in self.running_processes:
                 del self.running_processes[task_id]
 
+            # 检查任务当前状态（可能已被手动停止）
+            task = get_task(task_id)
+            if task and task.get('status') == 'stopped':
+                # 任务已被手动停止，不要覆盖状态
+                await self._send_log_to_websocket(task_id, "\n[训练已停止] 进程已终止")
+                return
+
             if return_code == 0:
                 # 训练成功
                 update_task(task_id, {
@@ -331,12 +338,19 @@ class TrainService:
                 })
                 await self._send_log_to_websocket(task_id, "\n[训练完成] 🎉")
             else:
-                # 训练失败
-                update_task(task_id, {
-                    "status": "failed",
-                    "error": f"训练进程退出码: {return_code}"
-                })
-                await self._send_log_to_websocket(task_id, f"\n[训练失败] 退出码: {return_code}")
+                # 训练失败或被信号终止
+                # 检查是否是被信号终止（SIGTERM=-15, SIGKILL=-9）
+                if return_code in [-15, -9, 143]:  # 143 = 128 + 15 (Docker 中的 SIGTERM)
+                    # 可能是被停止，但状态未及时更新，设置为 stopped
+                    update_task(task_id, {"status": "stopped"})
+                    await self._send_log_to_websocket(task_id, "\n[训练已停止] 进程被终止信号中断")
+                else:
+                    # 其他退出码视为失败
+                    update_task(task_id, {
+                        "status": "failed",
+                        "error": f"训练进程退出码: {return_code}"
+                    })
+                    await self._send_log_to_websocket(task_id, f"\n[训练失败] 退出码: {return_code}")
 
         except FileNotFoundError as e:
             # 数据集不存在

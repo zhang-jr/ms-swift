@@ -330,7 +330,6 @@ const TrainPage = () => {
     try {
       await trainAPI.stopTraining(currentTask.task_id)
       message.success('训练已停止')
-      setTraining(false)
 
       // 清理轮询
       if (pollIntervalRef.current) {
@@ -343,6 +342,21 @@ const TrainPage = () => {
         wsRef.current.close()
         wsRef.current = null
       }
+
+      // 延迟更新前端状态，先轮询一次确认后端状态
+      setTimeout(async () => {
+        try {
+          const status = await trainAPI.getStatus(currentTask.task_id)
+          setCurrentTask(status)
+          // 只有在确认后端状态是 stopped/failed/completed 后才更新前端训练状态
+          if (status.status === 'stopped' || status.status === 'failed' || status.status === 'completed') {
+            setTraining(false)
+          }
+        } catch (error) {
+          // 获取状态失败，保险起见还是设置为未训练状态
+          setTraining(false)
+        }
+      }, 500)  // 延迟 500ms 让后端有时间更新状态
     } catch (error: any) {
       message.error(error.message || '停止训练失败')
     }
