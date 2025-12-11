@@ -17,6 +17,7 @@ import {
   Alert,
   Tag,
   Statistic,
+  Checkbox,
 } from 'antd'
 import {
   PlayCircleOutlined,
@@ -509,36 +510,44 @@ const TrainPage = () => {
                       borderRadius: '8px',
                       padding: '12px',
                       background: 'rgba(102, 126, 234, 0.05)',
-                      maxHeight: '300px',
-                      overflow: 'auto'
+                      maxHeight: '200px',
+                      overflow: 'auto',
+                      // 自定义滚动条样式
+                      scrollbarWidth: 'thin',
+                      scrollbarColor: 'rgba(102, 126, 234, 0.5) rgba(102, 126, 234, 0.1)'
                     }}
+                    className="custom-scrollbar"
                   >
                     {(datasets || [])
                       .filter((d) => d.is_directory)
                       .map((dataset) => {
                         const isSelected = dataset.name in selectedDatasets
                         return (
-                          <Row
+                          <div
                             key={dataset.name}
-                            gutter={[16, 8]}
                             style={{
-                              padding: '8px',
-                              borderRadius: '4px',
-                              background: isSelected ? 'rgba(102, 126, 234, 0.1)' : 'transparent',
-                              marginBottom: '8px'
+                              padding: '10px 12px',
+                              borderRadius: '6px',
+                              background: isSelected ? 'rgba(102, 126, 234, 0.15)' : 'rgba(255, 255, 255, 0.02)',
+                              border: `1px solid ${isSelected ? 'rgba(102, 126, 234, 0.4)' : 'transparent'}`,
+                              marginBottom: '8px',
+                              transition: 'all 0.2s ease',
+                              cursor: 'pointer'
+                            }}
+                            onMouseEnter={(e) => {
+                              if (!isSelected) {
+                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)'
+                              }
+                            }}
+                            onMouseLeave={(e) => {
+                              if (!isSelected) {
+                                e.currentTarget.style.background = 'rgba(255, 255, 255, 0.02)'
+                              }
                             }}
                           >
-                            <Col span={14}>
-                              <label
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  cursor: 'pointer',
-                                  gap: '8px'
-                                }}
-                              >
-                                <input
-                                  type="checkbox"
+                            <Row gutter={[12, 8]} align="middle">
+                              <Col flex="auto">
+                                <Checkbox
                                   checked={isSelected}
                                   onChange={(e) => {
                                     if (e.target.checked) {
@@ -549,36 +558,44 @@ const TrainPage = () => {
                                       setSelectedDatasets(newSelected)
                                     }
                                   }}
-                                  style={{ cursor: 'pointer' }}
-                                />
-                                <FolderOutlined style={{ color: '#667eea' }} />
-                                <span style={{ fontWeight: isSelected ? 'bold' : 'normal' }}>
-                                  {dataset.name}
-                                </span>
-                                <Tag color="blue">{dataset.file_count || 0} 个文件</Tag>
-                                <span style={{ color: 'rgba(255, 255, 255, 0.45)', fontSize: '12px' }}>
-                                  {dataset.size_mb.toFixed(2)} MB
-                                </span>
-                              </label>
-                            </Col>
-                            <Col span={10}>
+                                >
+                                  <Space size={8}>
+                                    <FolderOutlined style={{ color: isSelected ? '#667eea' : 'rgba(255, 255, 255, 0.65)' }} />
+                                    <span style={{
+                                      fontWeight: isSelected ? 600 : 400,
+                                      color: isSelected ? '#fff' : 'rgba(255, 255, 255, 0.85)'
+                                    }}>
+                                      {dataset.name}
+                                    </span>
+                                    <Tag color="blue" style={{ margin: 0 }}>
+                                      {dataset.file_count || 0} 个文件
+                                    </Tag>
+                                    <span style={{ color: 'rgba(255, 255, 255, 0.45)', fontSize: '12px' }}>
+                                      {dataset.size_mb.toFixed(2)} MB
+                                    </span>
+                                  </Space>
+                                </Checkbox>
+                              </Col>
                               {isSelected && (
-                                <InputNumber
-                                  placeholder="采样数量（可选）"
-                                  min={1}
-                                  value={selectedDatasets[dataset.name]}
-                                  onChange={(value) => {
-                                    setSelectedDatasets({
-                                      ...selectedDatasets,
-                                      [dataset.name]: value || undefined
-                                    })
-                                  }}
-                                  style={{ width: '100%' }}
-                                  addonAfter="条"
-                                />
+                                <Col flex="180px">
+                                  <InputNumber
+                                    placeholder="采样数量"
+                                    min={1}
+                                    value={selectedDatasets[dataset.name]}
+                                    onChange={(value) => {
+                                      setSelectedDatasets({
+                                        ...selectedDatasets,
+                                        [dataset.name]: value || undefined
+                                      })
+                                    }}
+                                    style={{ width: '100%' }}
+                                    size="small"
+                                    addonAfter="条"
+                                  />
+                                </Col>
                               )}
-                            </Col>
-                          </Row>
+                            </Row>
+                          </div>
                         )
                       })}
                     {Object.keys(selectedDatasets).length === 0 && (
@@ -603,7 +620,7 @@ const TrainPage = () => {
                 </div>
               </Form.Item>
 
-              <Collapse defaultActiveKey={[]} ghost>
+              <Collapse defaultActiveKey={['basic']} ghost>
                 <Panel header="基础参数" key="basic">
                   <Form.Item label="训练类型" name="train_type">
                     <Select>
