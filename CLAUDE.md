@@ -213,7 +213,7 @@ app.include_router(model.router, prefix="/api/model", tags=["模型管理"])
 ```
 
 #### 任务 2.2: 数据管理 API 开发 ✅
-- [x] `/api/data/upload` - 上传数据集（支持 CSV, JSONL, JSON, TSV, TXT）
+- [x] `/api/data/upload` - 上传数据集（支持 CSV, JSONL, JSON, TSV, TXT, Parquet, Arrow）
 - [x] `/api/data/list` - 获取数据集列表
 - [x] `/api/data/preview/{filename}` - 预览数据集（前 N 行）
 - [x] `/api/data/info/{filename}` - 获取数据集详细信息
@@ -225,6 +225,23 @@ app.include_router(model.router, prefix="/api/model", tags=["模型管理"])
 - 支持多种数据格式的预览（自动识别列名）
 - 文件大小、行数统计
 - 路径安全验证（防止路径遍历攻击）
+
+**最新改进 (2025-12-11)**:
+- ✅ **扩展文件类型支持** - 参考 HuggingFace/ModelScope 标准
+  - 文本格式: `.jsonl`, `.json`, `.csv`, `.tsv`, `.txt`
+  - Parquet/Arrow: `.parquet`, `.pq`, `.arrow` (HuggingFace 默认格式)
+  - 图像格式: `.jpg`, `.jpeg`, `.png`, `.gif`, `.bmp`, `.webp`
+  - 音频格式: `.wav`, `.mp3`, `.flac`, `.ogg`
+  - 视频格式: `.mp4`, `.avi`, `.mov`, `.mkv`
+  - 其他格式: `.pkl`, `.pickle`, `.npy`, `.npz`, `.h5`, `.hdf5`
+- ✅ **Parquet/Arrow 预览** - 使用 pandas 和 pyarrow 读取并预览
+- ✅ **递归目录扫描** - 支持多层目录结构（用于多模态数据集）
+  - `scan_datasets()` 现在递归扫描最多 5 层子目录
+  - 支持包含图片/音频的多模态数据集文件夹
+  - 相对路径用作 dataset_id（如 `folder/subfolder/data.jsonl`）
+- ✅ **Web 上传策略** - 只允许文本和结构化数据格式上传
+  - 大文件（图片、音频、视频）建议通过 Docker volume 挂载
+  - 保持预览能力与实际需求的平衡
 
 #### 任务 2.3: 训练 API 开发 ✅ **[已完成 - 真实训练集成]**
 - [x] `/api/train/start` - 启动训练
