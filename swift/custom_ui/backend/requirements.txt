@@ -4,3 +4,6 @@ pydantic>=2.0.0
 websockets>=12.0
 python-multipart>=0.0.6
 psutil>=5.9.0
+# 数据集格式支持（HuggingFace/ModelScope 标准）
+pandas>=2.0.0
+pyarrow>=10.0.0
