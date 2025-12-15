@@ -20,10 +20,11 @@ import {
   DownloadOutlined,
   ReloadOutlined,
   FileOutlined,
+  SwapOutlined,
 } from '@ant-design/icons'
 import type { UploadFile } from 'antd'
 import { dataAPI } from '../api/data'
-import type { DatasetInfo, FolderPreview } from '../api/data'
+import type { DatasetInfo, FolderPreview, ConvertRequest, ConvertResponse } from '../api/data'
 
 const DataManagementPage = () => {
   const [datasets, setDatasets] = useState<DatasetInfo[]>([])
@@ -34,6 +35,20 @@ const DataManagementPage = () => {
   const [previewModalVisible, setPreviewModalVisible] = useState(false)
   const [previewData, setPreviewData] = useState<FolderPreview | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+
+  // 数据转换相关状态
+  const [convertModalVisible, setConvertModalVisible] = useState(false)
+  const [convertLoading, setConvertLoading] = useState(false)
+  const [selectedProject, setSelectedProject] = useState<string>('')
+  const [convertConfig, setConvertConfig] = useState<ConvertRequest>({
+    project_name: '',
+    output_format: 'parquet',
+    shard_size_mb: 100,
+    include_overlays: true,
+    output_name: '',
+  })
+  const [convertResultVisible, setConvertResultVisible] = useState(false)
+  const [convertResult, setConvertResult] = useState<ConvertResponse | null>(null)
 
   // 加载数据集列表
   const loadDatasets = async () => {
@@ -118,6 +133,51 @@ const DataManagementPage = () => {
     }
   }
 
+  // 打开转换模态框
+  const handleOpenConvert = (projectName: string) => {
+    setSelectedProject(projectName)
+    setConvertConfig({
+      project_name: projectName,
+      output_format: 'parquet',
+      shard_size_mb: 100,
+      include_overlays: true,
+      output_name: `${projectName}_converted`,
+    })
+    setConvertModalVisible(true)
+  }
+
+  // 执行转换
+  const handleConvert = async () => {
+    setConvertLoading(true)
+    try {
+      // 先验证项目结构
+      const validation = await dataAPI.validateAnnotationProject(convertConfig.project_name)
+
+      if (!validation.valid) {
+        message.error(`项目验证失败: ${validation.error}`)
+        setConvertLoading(false)
+        return
+      }
+
+      message.info(`找到 ${validation.instruction_count} 个标注文件，开始转换...`)
+
+      // 执行转换
+      const result = await dataAPI.convertAnnotationDataset(convertConfig)
+
+      setConvertResult(result)
+      setConvertModalVisible(false)
+      setConvertResultVisible(true)
+      message.success('数据转换成功！')
+
+      // 刷新数据集列表
+      loadDatasets()
+    } catch (error: any) {
+      message.error(`转换失败: ${error.message}`)
+    } finally {
+      setConvertLoading(false)
+    }
+  }
+
   const columns = [
     {
       title: '名称',
@@ -172,6 +232,17 @@ const DataManagementPage = () => {
           >
             预览
           </Button>
+          {record.is_directory && (
+            <Button
+              type="link"
+              size="small"
+              icon={<SwapOutlined />}
+              onClick={() => handleOpenConvert(record.name)}
+              style={{ color: '#52c41a' }}
+            >
+              转换
+            </Button>
+          )}
           {!record.is_directory && (
             <Button
               type="link"
@@ -351,6 +422,211 @@ const DataManagementPage = () => {
             />
           </>
         ) : null}
+      </Modal>
+
+      {/* 数据转换模态框 */}
+      <Modal
+        title={
+          <Space>
+            <SwapOutlined style={{ color: '#52c41a' }} />
+            <span>转换标注数据</span>
+          </Space>
+        }
+        open={convertModalVisible}
+        onOk={handleConvert}
+        onCancel={() => {
+          setConvertModalVisible(false)
+          setSelectedProject('')
+        }}
+        okText="开始转换"
+        cancelText="取消"
+        confirmLoading={convertLoading}
+        width={600}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="large">
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>项目名称:</div>
+            <Input value={convertConfig.project_name} disabled />
+          </div>
+
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>输出文件夹名称:</div>
+            <Input
+              placeholder="例如: project_001_converted"
+              value={convertConfig.output_name}
+              onChange={(e) =>
+                setConvertConfig({ ...convertConfig, output_name: e.target.value })
+              }
+            />
+            <div style={{ marginTop: 4, fontSize: 12, color: 'rgba(255, 255, 255, 0.45)' }}>
+              默认为: {convertConfig.project_name}_converted
+            </div>
+          </div>
+
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>输出格式:</div>
+            <Space>
+              <Button
+                type={convertConfig.output_format === 'parquet' ? 'primary' : 'default'}
+                onClick={() =>
+                  setConvertConfig({ ...convertConfig, output_format: 'parquet' })
+                }
+              >
+                Parquet (推荐)
+              </Button>
+              <Button
+                type={convertConfig.output_format === 'jsonl' ? 'primary' : 'default'}
+                onClick={() =>
+                  setConvertConfig({ ...convertConfig, output_format: 'jsonl' })
+                }
+              >
+                JSONL
+              </Button>
+            </Space>
+          </div>
+
+          {convertConfig.output_format === 'parquet' && (
+            <div>
+              <div style={{ marginBottom: 8, fontWeight: 500 }}>分片大小 (MB):</div>
+              <Input
+                type="number"
+                min={0}
+                max={500}
+                value={convertConfig.shard_size_mb}
+                onChange={(e) =>
+                  setConvertConfig({
+                    ...convertConfig,
+                    shard_size_mb: parseInt(e.target.value) || 100,
+                  })
+                }
+              />
+              <div style={{ marginTop: 4, fontSize: 12, color: 'rgba(255, 255, 255, 0.45)' }}>
+                0 表示不分片，推荐: 100-200MB
+              </div>
+            </div>
+          )}
+
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>使用 Overlay 图片:</div>
+            <Space>
+              <Button
+                type={convertConfig.include_overlays ? 'primary' : 'default'}
+                onClick={() =>
+                  setConvertConfig({ ...convertConfig, include_overlays: true })
+                }
+              >
+                是（带标注框）
+              </Button>
+              <Button
+                type={!convertConfig.include_overlays ? 'primary' : 'default'}
+                onClick={() =>
+                  setConvertConfig({ ...convertConfig, include_overlays: false })
+                }
+              >
+                否（原始图片）
+              </Button>
+            </Space>
+            <div style={{ marginTop: 4, fontSize: 12, color: 'rgba(255, 255, 255, 0.45)' }}>
+              Overlay 图片包含可视化的标注框
+            </div>
+          </div>
+        </Space>
+      </Modal>
+
+      {/* 转换结果模态框 */}
+      <Modal
+        title={
+          <Space>
+            <SwapOutlined style={{ color: '#52c41a' }} />
+            <span>转换成功</span>
+          </Space>
+        }
+        open={convertResultVisible}
+        onCancel={() => {
+          setConvertResultVisible(false)
+          setConvertResult(null)
+        }}
+        footer={[
+          <Button
+            key="close"
+            type="primary"
+            onClick={() => {
+              setConvertResultVisible(false)
+              setConvertResult(null)
+            }}
+          >
+            关闭
+          </Button>,
+        ]}
+        width={700}
+      >
+        {convertResult && (
+          <>
+            <Descriptions bordered size="small" column={2} style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="输出文件夹" span={2}>
+                <Tag color="green">{convertResult.output_folder}</Tag>
+              </Descriptions.Item>
+              <Descriptions.Item label="总样本数">
+                {convertResult.summary.total_samples}
+              </Descriptions.Item>
+              <Descriptions.Item label="总图片数">
+                {convertResult.summary.total_images}
+              </Descriptions.Item>
+              <Descriptions.Item label="图像样本">
+                {convertResult.summary.media_types.image}
+              </Descriptions.Item>
+              <Descriptions.Item label="PDF 样本">
+                {convertResult.summary.media_types.pdf}
+              </Descriptions.Item>
+              <Descriptions.Item label="视频样本">
+                {convertResult.summary.media_types.video}
+              </Descriptions.Item>
+              <Descriptions.Item label="文件数量" span={2}>
+                {convertResult.output_files.length} 个文件
+              </Descriptions.Item>
+            </Descriptions>
+
+            <div style={{ marginTop: 16 }}>
+              <div style={{ marginBottom: 8, fontWeight: 500 }}>生成的文件:</div>
+              <div
+                style={{
+                  maxHeight: 200,
+                  overflow: 'auto',
+                  background: 'rgba(0, 0, 0, 0.2)',
+                  padding: 12,
+                  borderRadius: 4,
+                }}
+              >
+                {convertResult.output_files.map((file, idx) => (
+                  <div key={idx} style={{ marginBottom: 4 }}>
+                    <FileOutlined /> {file}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div
+              style={{
+                marginTop: 16,
+                padding: 12,
+                background: 'rgba(82, 196, 26, 0.1)',
+                borderRadius: 4,
+                border: '1px solid rgba(82, 196, 26, 0.3)',
+              }}
+            >
+              <div style={{ fontWeight: 500, marginBottom: 8 }}>
+                使用转换后的数据集:
+              </div>
+              <div style={{ fontSize: 12, color: 'rgba(255, 255, 255, 0.85)' }}>
+                1. 在训练页面选择数据集时，选择 "{convertResult.output_folder}"
+                <br />
+                2. 系统会自动读取该文件夹下的所有 Parquet 文件
+                <br />
+                3. 开始训练即可
+              </div>
+            </div>
+          </>
+        )}
       </Modal>
     </div>
   )

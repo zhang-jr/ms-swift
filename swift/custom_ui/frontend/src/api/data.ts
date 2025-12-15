@@ -141,6 +141,83 @@ export const previewDataset = async (filename: string, lines: number = 10): Prom
   return response as any
 }
 
+// ============ 数据转换 API ============
+
+export interface ConvertRequest {
+  project_name: string
+  output_format?: 'parquet' | 'jsonl'
+  shard_size_mb?: number
+  include_overlays?: boolean
+  output_name?: string
+}
+
+export interface ConvertResponse {
+  status: string
+  output_folder: string
+  output_files: string[]
+  summary: {
+    total_samples: number
+    media_types: {
+      image: number
+      pdf: number
+      video: number
+    }
+    total_images: number
+    providers: Record<string, number>
+    models: Record<string, number>
+  }
+}
+
+export interface ValidationResponse {
+  valid: boolean
+  project_name?: string
+  instruction_count?: number
+  has_overlays?: boolean
+  structure?: {
+    instruction: boolean
+    uploads: boolean
+    overlays: boolean
+  }
+  error?: string
+}
+
+/**
+ * 验证标注项目结构
+ */
+export const validateAnnotationProject = async (
+  projectName: string
+): Promise<ValidationResponse> => {
+  const response = await apiClient.post('/data/validate-annotation-project', null, {
+    params: { project_name: projectName },
+  })
+  return response as any
+}
+
+/**
+ * 转换标注数据集为 HuggingFace Datasets 格式
+ */
+export const convertAnnotationDataset = async (
+  request: ConvertRequest
+): Promise<ConvertResponse> => {
+  const response = await apiClient.post('/data/convert', request)
+  return response as any
+}
+
+/**
+ * 获取支持的转换格式
+ */
+export const getConvertFormats = async (): Promise<{
+  formats: Array<{
+    name: string
+    description: string
+    supports_sharding: boolean
+  }>
+  media_types: string[]
+}> => {
+  const response = await apiClient.get('/data/convert-formats')
+  return response as any
+}
+
 export const dataAPI = {
   listDatasets,
   uploadFile,
@@ -150,4 +227,8 @@ export const dataAPI = {
   downloadDataset,
   previewFolder,
   previewDataset,
+  // 数据转换
+  validateAnnotationProject,
+  convertAnnotationDataset,
+  getConvertFormats,
 }

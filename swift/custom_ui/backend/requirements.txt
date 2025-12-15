@@ -4,6 +4,12 @@ pydantic>=2.0.0
 websockets>=12.0
 python-multipart>=0.0.6
 psutil>=5.9.0
+
 # 数据集格式支持（HuggingFace/ModelScope 标准）
 pandas>=2.0.0
 pyarrow>=10.0.0
+
+# 数据转换功能依赖（标注数据 → Datasets）
+pillow>=11.0.0  # 图像处理
+pymupdf>=1.25.2  # PDF 处理（可选）
+opencv-python>=4.10.0  # 视频处理（可选）

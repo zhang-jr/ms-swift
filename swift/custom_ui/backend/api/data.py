@@ -592,3 +592,160 @@ async def get_dataset_info_endpoint(name: str):
         raise HTTPException(status_code=404, detail="数据集不存在")
 
     return get_dataset_info(path)
+
+
+# ============ 数据转换 API（标注数据 → HuggingFace Datasets） ============
+
+class ConvertRequest(BaseModel):
+    """数据转换请求"""
+    project_name: str  # 标注项目文件夹名称
+    output_format: str = "parquet"  # 输出格式: parquet 或 jsonl
+    shard_size_mb: int = 100  # Parquet 分片大小（MB）
+    include_overlays: bool = True  # 是否使用带标注框的 overlay 图片
+    output_name: Optional[str] = None  # 输出文件夹名称（默认为 {project_name}_converted）
+
+
+class ConvertResponse(BaseModel):
+    """数据转换响应"""
+    status: str
+    output_folder: str  # 输出文件夹名称
+    output_files: List[str]  # 生成的文件列表
+    summary: dict  # 统计信息
+
+
+class ValidationResponse(BaseModel):
+    """项目验证响应"""
+    valid: bool
+    project_name: Optional[str] = None
+    instruction_count: Optional[int] = None
+    has_overlays: Optional[bool] = None
+    structure: Optional[dict] = None
+    error: Optional[str] = None
+
+
+@router.post("/validate-annotation-project", response_model=ValidationResponse)
+async def validate_annotation_project_endpoint(project_name: str):
+    """
+    验证标注项目结构
+
+    Args:
+        project_name: 标注项目文件夹名称
+
+    Returns:
+        ValidationResponse: 验证结果
+    """
+    from services.dataset_converter_service import validate_annotation_project
+
+    try:
+        result = validate_annotation_project(project_name)
+        return ValidationResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"验证失败: {str(e)}")
+
+
+@router.post("/convert", response_model=ConvertResponse)
+async def convert_annotation_dataset(request: ConvertRequest):
+    """
+    转换标注数据集为 HuggingFace Datasets 格式
+
+    Args:
+        request: 转换请求参数
+
+    Returns:
+        ConvertResponse: 转换结果
+    """
+    from services.dataset_converter_service import DatasetConverter
+
+    try:
+        # 初始化转换器
+        converter = DatasetConverter(request.project_name)
+
+        # 转换所有数据
+        results = converter.convert_all(use_overlay=request.include_overlays)
+
+        if not results:
+            raise HTTPException(status_code=400, detail="没有成功转换的数据")
+
+        # 确定输出目录
+        output_name = request.output_name or f"{request.project_name}_converted"
+        output_dir = DATA_DIR / output_name
+
+        # 如果输出目录已存在，抛出错误
+        if output_dir.exists():
+            raise HTTPException(
+                status_code=409,
+                detail=f"输出文件夹 {output_name} 已存在，请先删除或选择其他名称"
+            )
+
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # 保存数据
+        output_files = []
+
+        if request.output_format == "parquet":
+            if request.shard_size_mb > 0:
+                # 分片保存
+                output_files = converter.save_to_parquet_sharded(
+                    results,
+                    output_dir=str(output_dir),
+                    output_prefix="train",
+                    max_shard_size_mb=request.shard_size_mb,
+                )
+            else:
+                # 单文件保存
+                output_file = "train.parquet"
+                converter.save_to_parquet(results, str(output_dir / output_file))
+                output_files = [output_file]
+
+        elif request.output_format == "jsonl":
+            output_file = "train.jsonl"
+            converter.save_to_jsonl(results, str(output_dir / output_file))
+            output_files = [output_file]
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"不支持的输出格式: {request.output_format}"
+            )
+
+        # 获取统计信息
+        stats = converter.get_statistics(results)
+
+        return ConvertResponse(
+            status="success",
+            output_folder=output_name,
+            output_files=output_files,
+            summary=stats,
+        )
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"转换失败: {str(e)}")
+
+
+@router.get("/convert-formats")
+async def get_convert_formats():
+    """获取支持的转换格式"""
+    return {
+        "formats": [
+            {
+                "name": "parquet",
+                "description": "Apache Parquet 格式，HuggingFace 推荐",
+                "supports_sharding": True,
+            },
+            {
+                "name": "jsonl",
+                "description": "JSON Lines 格式，用于调试",
+                "supports_sharding": False,
+            },
+        ],
+        "media_types": [
+            "image (jpg, png)",
+            "pdf",
+            "video (mp4)"
+        ]
+    }

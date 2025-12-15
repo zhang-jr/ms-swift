@@ -219,6 +219,9 @@ app.include_router(model.router, prefix="/api/model", tags=["模型管理"])
 - [x] `/api/data/info/{filename}` - 获取数据集详细信息
 - [x] `/api/data/download/{filename}` - 下载数据集
 - [x] `/api/data/delete/{filename}` - 删除数据集
+- [x] `/api/data/validate-annotation-project` - 验证标注项目结构 ✅ **[2025-12-15 新增]**
+- [x] `/api/data/convert` - 转换标注数据为 HuggingFace Datasets 格式 ✅ **[2025-12-15 新增]**
+- [x] `/api/data/convert-formats` - 获取支持的转换格式 ✅ **[2025-12-15 新增]**
 
 **已实现功能**:
 - 文件上传最大 1GB，自动保存到 `/app/data`
@@ -242,6 +245,49 @@ app.include_router(model.router, prefix="/api/model", tags=["模型管理"])
 - ✅ **Web 上传策略** - 只允许文本和结构化数据格式上传
   - 大文件（图片、音频、视频）建议通过 Docker volume 挂载
   - 保持预览能力与实际需求的平衡
+
+**数据转换功能 (2025-12-15 新增)** ✅:
+- ✅ **标注数据转换** - 将标注平台的数据转换为 HuggingFace Datasets 格式
+  - 支持图像、PDF、视频三种媒体类型
+  - 自动处理带标注框的 overlay 图片
+  - 支持 Parquet 和 JSONL 两种输出格式
+  - 自动分片保存（参考 FineVision 数据集）
+  - 提供完整的统计信息（样本数、媒体类型、模型等）
+
+- ✅ **项目结构验证** - 转换前自动验证标注项目
+  - 检查必需目录（instruction, uploads, overlays）
+  - 统计 instruction 文件数量
+  - 检查是否包含 overlay 图片
+
+- ✅ **转换服务** (`services/dataset_converter_service.py`)
+  - `DatasetConverter` 类：核心转换逻辑
+  - `validate_annotation_project()` 函数：项目验证
+  - 路径安全验证（防止路径遍历攻击）
+  - 支持自定义输出文件夹名称
+
+- ✅ **前端转换界面** (`DataManagementPage.tsx`)
+  - 数据集列表中的"转换"按钮（仅文件夹显示）
+  - 转换配置模态框（输出格式、分片大小、overlay 选项）
+  - 转换结果模态框（统计信息、生成文件列表）
+  - 使用指南（如何在训练界面使用转换后的数据）
+
+**转换工作流**:
+```
+标注项目文件夹（/app/data/project_001）
+├── instruction/      *.json 文件
+├── uploads/          原始媒体文件
+└── overlays/         带标注框的图片
+    ↓ 用户点击"转换"按钮
+后端转换服务
+    ↓ 处理所有 instruction 文件
+    ↓ 转换为 HuggingFace Datasets 格式
+转换后的数据集（/app/data/project_001_converted）
+├── train-00000-of-00005.parquet
+├── train-00001-of-00005.parquet
+...
+    ↓ 用户在训练界面选择
+MS-SWIFT 训练
+```
 
 #### 任务 2.3: 训练 API 开发 ✅ **[已完成 - 真实训练集成]**
 - [x] `/api/train/start` - 启动训练
