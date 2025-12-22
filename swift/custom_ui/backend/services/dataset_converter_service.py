@@ -34,10 +34,12 @@ class DatasetConverter:
         if ".." in project_name or "/" in project_name or "\\" in project_name:
             raise ValueError(f"非法的项目名称: {project_name}")
 
+        self.project_name = project_name
         self.project_root = DATA_DIR / project_name
-        self.instruction_dir = self.project_root / "instruction"
+        self.instructions_dir = self.project_root / "instructions"  # 改为 instructions（复数）
         self.overlays_dir = self.project_root / "overlays"
         self.uploads_dir = self.project_root / "uploads"
+        self.data_dir = self.project_root / "data"  # 输出目录
 
         # 验证目录
         self._validate_directories()
@@ -47,8 +49,8 @@ class DatasetConverter:
         if not self.project_root.exists():
             raise ValueError(f"项目根目录不存在: {self.project_root}")
 
-        if not self.instruction_dir.exists():
-            raise ValueError(f"instruction 目录不存在: {self.instruction_dir}")
+        if not self.instructions_dir.exists():
+            raise ValueError(f"instructions 目录不存在: {self.instructions_dir}")
 
         if not self.uploads_dir.exists():
             logger.warning(f"uploads 目录不存在: {self.uploads_dir}")
@@ -289,7 +291,9 @@ class DatasetConverter:
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ) -> List[Dict]:
         """
-        转换所有instruction文件
+        转换所有instruction文件（支持 instructions/ 子目录结构）
+
+        扫描 instructions/image/, instructions/pdf/, instructions/video/ 下的所有 JSON 文件
 
         Args:
             use_overlay: 是否优先使用带标注框的图片
@@ -299,10 +303,10 @@ class DatasetConverter:
             转换后的数据列表
         """
         results = []
-        instruction_files = list(self.instruction_dir.rglob("*.json"))
+        instruction_files = list(self.instructions_dir.rglob("*.json"))
         total_files = len(instruction_files)
 
-        logger.info(f"找到 {total_files} 个 instruction 文件")
+        logger.info(f"扫描 instructions/ 目录，找到 {total_files} 个 instruction 文件")
 
         for idx, inst_file in enumerate(instruction_files, 1):
             try:
@@ -461,10 +465,83 @@ class DatasetConverter:
 
         return stats
 
+    def generate_dataset_infos(
+        self,
+        output_files: List[str],
+        num_samples: int,
+        data_dir: Path,
+    ) -> Dict[str, Any]:
+        """
+        生成 dataset_infos.json 文件（HuggingFace datasets 标准）
+
+        Args:
+            output_files: 生成的 Parquet 文件列表
+            num_samples: 样本总数
+            data_dir: data/ 目录路径
+
+        Returns:
+            dataset_infos 字典
+        """
+        # 计算总大小
+        total_bytes = 0
+        for filename in output_files:
+            filepath = data_dir / filename
+            if filepath.exists():
+                total_bytes += filepath.stat().st_size
+
+        dataset_infos = {
+            "default": {
+                "description": f"Annotation dataset for vision tasks - {self.project_name}",
+                "citation": "",
+                "homepage": "",
+                "license": "",
+                "features": {
+                    "messages": {
+                        "feature": {
+                            "role": {"dtype": "string"},
+                            "content": {"dtype": "string"},
+                        }
+                    },
+                    "images": {
+                        "feature": {"dtype": "string"}
+                    },
+                    "metadata": {
+                        "source_file": {"dtype": "string"},
+                        "media_type": {"dtype": "string"},
+                        "llm_provider": {"dtype": "string"},
+                        "model_name": {"dtype": "string"},
+                    },
+                },
+                "splits": {
+                    "train": {
+                        "name": "train",
+                        "num_bytes": total_bytes,
+                        "num_examples": num_samples,
+                        "dataset_name": self.project_name,
+                    }
+                },
+                "download_size": total_bytes,
+                "dataset_size": total_bytes,
+            }
+        }
+
+        # 保存 dataset_infos.json
+        infos_path = data_dir / "dataset_infos.json"
+        with open(infos_path, "w", encoding="utf-8") as f:
+            json.dump(dataset_infos, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"✓ 生成 dataset_infos.json: {infos_path}")
+        return dataset_infos
+
 
 def validate_annotation_project(project_name: str) -> Dict[str, Any]:
     """
-    验证标注项目结构
+    验证标注项目结构（新版本：支持 instructions/ 目录）
+
+    项目结构要求:
+    - instructions/ (必需) - 包含 image/, pdf/, video/ 子目录
+    - uploads/ (必需) - 原始媒体文件
+    - overlays/ (可选) - 标注可视化图片
 
     Args:
         project_name: 项目文件夹名称
@@ -493,13 +570,13 @@ def validate_annotation_project(project_name: str) -> Dict[str, Any]:
             "error": f"{project_name} 不是文件夹",
         }
 
-    instruction_dir = project_root / "instruction"
+    instructions_dir = project_root / "instructions"  # 改为复数
     uploads_dir = project_root / "uploads"
     overlays_dir = project_root / "overlays"
 
     missing_dirs = []
-    if not instruction_dir.exists():
-        missing_dirs.append("instruction")
+    if not instructions_dir.exists():
+        missing_dirs.append("instructions")
     if not uploads_dir.exists():
         missing_dirs.append("uploads")
 
@@ -509,8 +586,8 @@ def validate_annotation_project(project_name: str) -> Dict[str, Any]:
             "error": f"缺少必需的目录: {', '.join(missing_dirs)}",
         }
 
-    # 统计 instruction 文件数量
-    instruction_files = list(instruction_dir.rglob("*.json"))
+    # 统计 instruction 文件数量（递归扫描所有子目录）
+    instruction_files = list(instructions_dir.rglob("*.json"))
     has_overlays = overlays_dir.exists()
 
     return {
@@ -519,7 +596,7 @@ def validate_annotation_project(project_name: str) -> Dict[str, Any]:
         "instruction_count": len(instruction_files),
         "has_overlays": has_overlays,
         "structure": {
-            "instruction": True,
+            "instructions": True,
             "uploads": True,
             "overlays": has_overlays,
         },

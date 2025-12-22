@@ -9,6 +9,7 @@ import {
   message,
   Tag,
   Input,
+  InputNumber,
   Popconfirm,
   Descriptions,
 } from 'antd'
@@ -42,7 +43,7 @@ const DataManagementPage = () => {
   const [convertConfig, setConvertConfig] = useState<ConvertRequest>({
     project_name: '',
     output_format: 'parquet',
-    shard_size_mb: 100,
+    shard_size_mb: 500,  // 默认 500MB
     include_overlays: true,
     output_name: '',
   })
@@ -137,9 +138,9 @@ const DataManagementPage = () => {
     setConvertConfig({
       project_name: projectName,
       output_format: 'parquet',
-      shard_size_mb: 100,
+      shard_size_mb: 500,  // 默认 500MB
       include_overlays: true,
-      output_name: `${projectName}_converted`,
+      output_name: '',  // 输出到项目内 data/ 目录，不需要用户自定义名称
     })
     setConvertModalVisible(true)
   }
@@ -442,19 +443,8 @@ const DataManagementPage = () => {
           <div>
             <div style={{ marginBottom: 8, fontWeight: 500 }}>项目名称:</div>
             <Input value={convertConfig.project_name} disabled />
-          </div>
-
-          <div>
-            <div style={{ marginBottom: 8, fontWeight: 500 }}>输出文件夹名称:</div>
-            <Input
-              placeholder="例如: project_001_converted"
-              value={convertConfig.output_name}
-              onChange={(e) =>
-                setConvertConfig({ ...convertConfig, output_name: e.target.value })
-              }
-            />
             <div style={{ marginTop: 4, fontSize: 12, color: 'rgba(255, 255, 255, 0.45)' }}>
-              默认为: {convertConfig.project_name}_converted
+              转换后的数据将保存到: {convertConfig.project_name}/data/
             </div>
           </div>
 
@@ -483,20 +473,21 @@ const DataManagementPage = () => {
           {convertConfig.output_format === 'parquet' && (
             <div>
               <div style={{ marginBottom: 8, fontWeight: 500 }}>分片大小 (MB):</div>
-              <Input
-                type="number"
+              <InputNumber
                 min={0}
-                max={500}
+                max={2000}
+                step={100}
                 value={convertConfig.shard_size_mb}
-                onChange={(e) =>
+                onChange={(value) =>
                   setConvertConfig({
                     ...convertConfig,
-                    shard_size_mb: parseInt(e.target.value) || 100,
+                    shard_size_mb: value || 500,
                   })
                 }
+                style={{ width: '100%' }}
               />
               <div style={{ marginTop: 4, fontSize: 12, color: 'rgba(255, 255, 255, 0.45)' }}>
-                0 表示不分片，推荐: 100-200MB
+                0 表示不分片，推荐: 500MB（步进 100MB，点击 +/- 按钮调整）
               </div>
             </div>
           )}
@@ -610,14 +601,16 @@ const DataManagementPage = () => {
               }}
             >
               <div style={{ fontWeight: 500, marginBottom: 8 }}>
-                使用转换后的数据集:
+                ✅ 转换完成！使用 datasets 库加载:
               </div>
               <div style={{ fontSize: 12, color: 'rgba(255, 255, 255, 0.85)' }}>
-                1. 在训练页面选择数据集时，选择 "{convertResult.output_folder}"
+                1. 在训练页面选择数据集时，输入项目名称: "{convertConfig.project_name}"
                 <br />
-                2. 系统会自动读取该文件夹下的所有 Parquet 文件
+                2. 系统会自动从 {convertResult.output_folder} 读取 Parquet 文件
                 <br />
-                3. 开始训练即可
+                3. 支持 HuggingFace datasets.load_dataset() 直接加载
+                <br />
+                4. 已生成 dataset_infos.json，确保快速加载
               </div>
             </div>
           </>

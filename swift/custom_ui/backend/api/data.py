@@ -686,7 +686,12 @@ async def validate_annotation_project_endpoint(project_name: str):
 @router.post("/convert", response_model=ConvertResponse)
 async def convert_annotation_dataset(request: ConvertRequest):
     """
-    转换标注数据集为 HuggingFace Datasets 格式
+    转换标注数据集为 HuggingFace Datasets 格式（输出到项目内的 data/ 目录）
+
+    新版本特性:
+    - 输出到项目内的 data/ 目录（而不是创建新文件夹）
+    - 自动生成 dataset_infos.json（HuggingFace datasets 标准）
+    - 支持 load_dataset() 直接加载
 
     Args:
         request: 转换请求参数
@@ -706,16 +711,15 @@ async def convert_annotation_dataset(request: ConvertRequest):
         if not results:
             raise HTTPException(status_code=400, detail="没有成功转换的数据")
 
-        # 确定输出目录
-        output_name = request.output_name or f"{request.project_name}_converted"
-        output_dir = DATA_DIR / output_name
+        # 输出到项目内的 data/ 目录
+        output_dir = converter.data_dir
 
-        # 如果输出目录已存在，抛出错误
-        if output_dir.exists():
-            raise HTTPException(
-                status_code=409,
-                detail=f"输出文件夹 {output_name} 已存在，请先删除或选择其他名称"
-            )
+        # 如果 data/ 目录已存在且不为空，清空它（或提示用户）
+        if output_dir.exists() and any(output_dir.iterdir()):
+            # 清空 data/ 目录
+            import shutil
+            shutil.rmtree(output_dir)
+            print(f"清空已存在的 data/ 目录: {output_dir}")
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -737,6 +741,13 @@ async def convert_annotation_dataset(request: ConvertRequest):
                 converter.save_to_parquet(results, str(output_dir / output_file))
                 output_files = [output_file]
 
+            # 生成 dataset_infos.json（仅 Parquet 格式）
+            converter.generate_dataset_infos(
+                output_files=output_files,
+                num_samples=len(results),
+                data_dir=output_dir,
+            )
+
         elif request.output_format == "jsonl":
             output_file = "train.jsonl"
             converter.save_to_jsonl(results, str(output_dir / output_file))
@@ -752,7 +763,7 @@ async def convert_annotation_dataset(request: ConvertRequest):
 
         return ConvertResponse(
             status="success",
-            output_folder=output_name,
+            output_folder=f"{request.project_name}/data",  # 返回相对路径
             output_files=output_files,
             summary=stats,
         )
