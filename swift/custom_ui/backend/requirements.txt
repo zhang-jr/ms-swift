@@ -7,9 +7,8 @@ psutil>=5.9.0
 requests>=2.31.0  # HTTP 请求（用于调用 vllm API）
 
 # 数据集格式支持（HuggingFace/ModelScope 标准）
+# 注意: pyarrow 和 datasets 由基础镜像提供（datasets 3.6.0, pyarrow 22.0.0）
 pandas>=2.0.0
-pyarrow>=22.0.0  # 需要 22.0.0+ 以支持嵌套结构的 Parquet（修复 "Repetition level histogram size mismatch" 错误）
-datasets>=2.14.0  # HuggingFace datasets 库（用于数据转换）
 
 # 数据转换功能依赖（标注数据 → Datasets）
 pillow>=11.0.0  # 图像处理
