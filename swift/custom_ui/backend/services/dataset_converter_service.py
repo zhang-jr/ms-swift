@@ -227,9 +227,9 @@ class DatasetConverter:
         self,
         use_overlay: bool = False,  # 不再使用 overlay
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
-    ) -> List[Dict]:
+    ) -> Dict[str, List[Dict]]:
         """
-        转换所有 instruction 文件
+        转换所有 instruction 文件（按媒体类型分类）
 
         扫描 instructions/ 下的所有 JSON 文件（递归）
 
@@ -238,9 +238,16 @@ class DatasetConverter:
             progress_callback: 进度回调函数 (current, total, filename)
 
         Returns:
-            转换后的数据列表
+            分类的数据字典:
+            {
+                "image": [...],  # image 和 pdf 数据（都是图片）
+                "video": [...],  # video 数据
+            }
         """
-        results = []
+        # 分类存储
+        image_results = []  # image 和 pdf（都是图片）
+        video_results = []  # video
+
         instruction_files = list(self.instructions_dir.rglob("*.json"))
         total_files = len(instruction_files)
 
@@ -259,14 +266,17 @@ class DatasetConverter:
                 if "image" in inst_data:
                     result = self.process_image_instruction(inst_data)
                     if result:
+                        image_results.append(result)
                         stats["image"] += 1
                 elif "pdf" in inst_data:
                     result = self.process_pdf_instruction(inst_data)
                     if result:
+                        image_results.append(result)  # PDF 也是图片
                         stats["pdf"] += 1
                 elif "video" in inst_data:
                     result = self.process_video_instruction(inst_data)
                     if result:
+                        video_results.append(result)
                         stats["video"] += 1
                 else:
                     logger.warning(f"未知类型: {inst_file}")
@@ -274,7 +284,6 @@ class DatasetConverter:
                     continue
 
                 if result:
-                    results.append(result)
                     logger.debug(f"[{idx}/{total_files}] 处理成功: {inst_file.name}")
                 else:
                     stats["skipped"] += 1
@@ -288,10 +297,16 @@ class DatasetConverter:
                 stats["skipped"] += 1
                 continue
 
-        logger.info(f"转换完成: {len(results)}/{total_files} 个样本")
+        total_samples = len(image_results) + len(video_results)
+        logger.info(f"转换完成: {total_samples}/{total_files} 个样本")
+        logger.info(f"  - 图片数据（image + pdf）: {len(image_results)}")
+        logger.info(f"  - 视频数据: {len(video_results)}")
         logger.info(f"统计: 图片={stats['image']}, PDF={stats['pdf']}, 视频={stats['video']}, 跳过={stats['skipped']}")
 
-        return results
+        return {
+            "image": image_results,
+            "video": video_results,
+        }
 
     def save_to_parquet(
         self, results: List[Dict], output_path: str, compression: str = "snappy"
@@ -496,10 +511,23 @@ class DatasetConverter:
         logger.info(f"✓ 生成 dataset_infos.json: {infos_path}")
         return dataset_infos
 
-    def get_statistics(self, results: List[Dict]) -> Dict[str, Any]:
-        """获取数据集统计信息（支持 list 和 JSON 字符串两种格式）"""
+    def get_statistics(self, results_dict: Dict[str, List[Dict]]) -> Dict[str, Any]:
+        """
+        获取数据集统计信息（支持分类数据）
+
+        Args:
+            results_dict: 分类的数据字典 {"image": [...], "video": [...]}
+
+        Returns:
+            统计信息
+        """
+        image_results = results_dict.get("image", [])
+        video_results = results_dict.get("video", [])
+
         stats = {
-            "total_samples": len(results),
+            "total_samples": len(image_results) + len(video_results),
+            "image_samples": len(image_results),
+            "video_samples": len(video_results),
             "media_types": {"image": 0, "pdf": 0, "video": 0},
             "total_images": 0,
             "total_videos": 0,
@@ -507,7 +535,10 @@ class DatasetConverter:
             "models": {},
         }
 
-        for result in results:
+        # 统计所有数据
+        all_results = image_results + video_results
+
+        for result in all_results:
             media_type = result.get("media_type", "unknown")
 
             # 统计媒体类型
