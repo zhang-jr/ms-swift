@@ -5,10 +5,16 @@
 
 核心原则:
 1. overlays 只是可视化标注结果，训练数据使用 uploads 中的原始数据
-2. 图片直接转 base64
-3. PDF 从原始 PDF 提取页面图片（使用 PyMuPDF）
-4. Video 暂时只保存路径（文件太大）
-5. dataset_infos.json 保存在项目根目录（与 data 平行）
+2. annotations 字段仅用于辅助，训练数据不依赖它
+3. 图片直接转 base64
+4. PDF 提取所有页面为图片（base64），让模型学会识别 raw_response 中的问题页
+5. Video 不转 base64（太大），使用绝对路径，让模型学会识别 raw_response 中的问题帧
+6. dataset_infos.json 保存在项目根目录（与 data 平行）
+
+数据格式:
+- 内存中: messages/images/videos 都是 list
+- Parquet 中: 序列化为 JSON 字符串（兼容性）
+- 训练时: ms-swift 会自动反序列化
 """
 
 import json
@@ -99,8 +105,8 @@ class DatasetConverter:
         ]
 
         return {
-            "messages": json.dumps(messages, ensure_ascii=False),  # 转为字符串
-            "images": json.dumps([image_b64], ensure_ascii=False),  # 转为字符串
+            "messages": messages,  # 保持为 list
+            "images": [image_b64],  # 保持为 list
             "source_file": str(image_rel_path),
             "media_type": "image",
             "llm_provider": inst_data.get("llm_provider", ""),
@@ -111,7 +117,8 @@ class DatasetConverter:
         """
         处理 PDF 类型的 instruction
 
-        从原始 PDF 提取页面图片（使用 PyMuPDF）
+        提取 PDF 的所有页面为图片（base64），不关注 annotations
+        训练目标：让模型学会识别 raw_response 中描述的问题页
 
         Args:
             inst_data: instruction 数据
@@ -120,14 +127,6 @@ class DatasetConverter:
             转换后的数据
         """
         pdf_rel_path = inst_data["pdf"]
-        annotations = inst_data.get("annotations", [])
-
-        # 获取所有被标注的页面
-        annotated_pages = sorted(set(ann["page"] for ann in annotations if "page" in ann))
-
-        if not annotated_pages:
-            logger.warning(f"PDF {pdf_rel_path} 没有标注页面")
-            return None
 
         # 从原始 PDF 提取页面图片
         pdf_path = self.uploads_dir / pdf_rel_path
@@ -147,11 +146,8 @@ class DatasetConverter:
         try:
             doc = pymupdf.open(pdf_path)
 
-            for page_num in annotated_pages:
-                if page_num >= len(doc):
-                    logger.warning(f"PDF {pdf_rel_path} 页面 {page_num} 不存在（总页数: {len(doc)}）")
-                    continue
-
+            # 提取所有页面（不管是否有 annotations）
+            for page_num in range(len(doc)):
                 # 提取页面为图片
                 page = doc[page_num]
                 pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))  # 2x 缩放
@@ -168,7 +164,7 @@ class DatasetConverter:
             return None
 
         if not images_b64:
-            logger.warning(f"PDF {pdf_rel_path} 没有可用的页面图片")
+            logger.warning(f"PDF {pdf_rel_path} 没有可用的页面")
             return None
 
         # 构建 messages
@@ -182,8 +178,8 @@ class DatasetConverter:
         ]
 
         return {
-            "messages": json.dumps(messages, ensure_ascii=False),
-            "images": json.dumps(images_b64, ensure_ascii=False),
+            "messages": messages,  # 保持为 list
+            "images": images_b64,  # 保持为 list
             "source_file": str(pdf_rel_path),
             "media_type": "pdf",
             "llm_provider": inst_data.get("llm_provider", ""),
@@ -194,30 +190,38 @@ class DatasetConverter:
         """
         处理视频类型的 instruction
 
-        视频文件太大，暂时只保存路径（或跳过）
+        视频文件太大，不转 base64，直接使用路径
+        训练目标：让模型学会识别 raw_response 中描述的问题帧
 
         Args:
             inst_data: instruction 数据
 
         Returns:
-            转换后的数据（或 None 跳过）
+            转换后的数据
         """
         video_rel_path = inst_data["video"]
-        annotations = inst_data.get("annotations", [])
 
-        # 提取标注的帧
-        annotated_frames = sorted(
-            set(ann["frame"] for ann in annotations if "frame" in ann)
-        )
+        # 从 uploads 获取原始视频
+        upload_path = self.uploads_dir / video_rel_path
 
-        if not annotated_frames:
-            logger.warning(f"视频 {video_rel_path} 没有标注帧，跳过")
+        if not upload_path.exists():
+            logger.warning(f"原始视频不存在: {upload_path}")
             return None
 
-        # 暂时跳过视频（文件太大）
-        # TODO: 未来可以提取关键帧或保存路径
-        logger.info(f"跳过视频 {video_rel_path}（暂不支持）")
-        return None
+        # 构建 messages（多模态格式）
+        messages = [
+            {"role": "user", "content": f"<video>{inst_data['instruction']}"},
+            {"role": "assistant", "content": inst_data["raw_response"]},
+        ]
+
+        return {
+            "messages": messages,  # 保持为 list
+            "videos": [str(upload_path)],  # 保持为 list，使用绝对路径
+            "source_file": str(video_rel_path),
+            "media_type": "video",
+            "llm_provider": inst_data.get("llm_provider", ""),
+            "model_name": inst_data.get("model_name", ""),
+        }
 
     def convert_all(
         self,
@@ -309,10 +313,12 @@ class DatasetConverter:
         max_shard_size_mb: int = 500,
     ) -> List[str]:
         """
-        自动分片保存
+        自动分片保存（Parquet 格式）
+
+        将 list 字段序列化为 JSON 字符串以兼容 Parquet
 
         Args:
-            results: 转换后的数据
+            results: 转换后的数据（messages/images/videos 为 list）
             output_dir: 输出目录
             output_prefix: 文件前缀
             max_shard_size_mb: 每个分片最大大小（MB）
@@ -323,13 +329,33 @@ class DatasetConverter:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
+        # 序列化 list 字段为 JSON 字符串（Parquet 兼容）
+        serialized_results = []
+        for sample in results:
+            serialized_sample = sample.copy()
+
+            # 序列化 messages
+            if "messages" in serialized_sample and isinstance(serialized_sample["messages"], list):
+                serialized_sample["messages"] = json.dumps(serialized_sample["messages"], ensure_ascii=False)
+
+            # 序列化 images
+            if "images" in serialized_sample and isinstance(serialized_sample["images"], list):
+                serialized_sample["images"] = json.dumps(serialized_sample["images"], ensure_ascii=False)
+
+            # 序列化 videos
+            if "videos" in serialized_sample and isinstance(serialized_sample["videos"], list):
+                serialized_sample["videos"] = json.dumps(serialized_sample["videos"], ensure_ascii=False)
+
+            serialized_results.append(serialized_sample)
+
         # 预估每个样本的大小
         def estimate_size(sample: Dict) -> int:
             """估算样本大小（字节）"""
             size = 0
-            # images 字段（JSON 字符串）
-            if "images" in sample:
-                size += len(sample["images"])
+            # images/videos 字段（JSON 字符串）
+            for key in ["images", "videos"]:
+                if key in sample:
+                    size += len(sample[key])
             # messages 字段（JSON 字符串）
             if "messages" in sample:
                 size += len(sample["messages"])
@@ -345,7 +371,7 @@ class DatasetConverter:
         current_size = 0
         max_size_bytes = max_shard_size_mb * 1024 * 1024
 
-        for sample in results:
+        for sample in serialized_results:
             sample_size = estimate_size(sample)
 
             # 检查是否需要创建新分片
@@ -411,8 +437,9 @@ class DatasetConverter:
                 "homepage": "",
                 "license": "",
                 "features": {
-                    "messages": {"dtype": "string"},  # JSON 字符串
+                    "messages": {"dtype": "string"},  # JSON 字符串（list of dict）
                     "images": {"dtype": "string"},  # JSON 字符串（base64 列表）
+                    "videos": {"dtype": "string"},  # JSON 字符串（路径列表）
                     "source_file": {"dtype": "string"},
                     "media_type": {"dtype": "string"},
                     "llm_provider": {"dtype": "string"},
@@ -440,11 +467,12 @@ class DatasetConverter:
         return dataset_infos
 
     def get_statistics(self, results: List[Dict]) -> Dict[str, Any]:
-        """获取数据集统计信息"""
+        """获取数据集统计信息（支持 list 和 JSON 字符串两种格式）"""
         stats = {
             "total_samples": len(results),
             "media_types": {"image": 0, "pdf": 0, "video": 0},
             "total_images": 0,
+            "total_videos": 0,
             "providers": {},
             "models": {},
         }
@@ -456,13 +484,27 @@ class DatasetConverter:
             if media_type in stats["media_types"]:
                 stats["media_types"][media_type] += 1
 
-            # 统计图片数量（解析 JSON 字符串）
-            images_json = result.get("images", "[]")
-            try:
-                images_list = json.loads(images_json)
-                stats["total_images"] += len(images_list)
-            except:
-                pass
+            # 统计图片数量（兼容 list 和 JSON 字符串）
+            images_data = result.get("images", [])
+            if isinstance(images_data, list):
+                stats["total_images"] += len(images_data)
+            elif isinstance(images_data, str):
+                try:
+                    images_list = json.loads(images_data)
+                    stats["total_images"] += len(images_list)
+                except:
+                    pass
+
+            # 统计视频数量（兼容 list 和 JSON 字符串）
+            videos_data = result.get("videos", [])
+            if isinstance(videos_data, list):
+                stats["total_videos"] += len(videos_data)
+            elif isinstance(videos_data, str):
+                try:
+                    videos_list = json.loads(videos_data)
+                    stats["total_videos"] += len(videos_list)
+                except:
+                    pass
 
             # 统计 LLM 提供商
             provider = result.get("llm_provider", "unknown")
