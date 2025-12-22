@@ -705,12 +705,10 @@ async def convert_annotation_dataset(request: ConvertRequest):
         # 初始化转换器
         converter = DatasetConverter(request.project_name)
 
-        # 转换所有数据（按类型分类）
-        results_dict = converter.convert_all(use_overlay=request.include_overlays)
-        image_results = results_dict["image"]
-        video_results = results_dict["video"]
+        # 转换所有数据（统一 schema）
+        results = converter.convert_all(use_overlay=request.include_overlays)
 
-        if not image_results and not video_results:
+        if not results:
             raise HTTPException(status_code=400, detail="没有成功转换的数据")
 
         # 输出到项目内的 data/ 目录
@@ -724,58 +722,36 @@ async def convert_annotation_dataset(request: ConvertRequest):
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # 保存数据（分成不同的 split）
+        # 保存数据（统一 schema，一个文件）
         output_files = []
 
         if request.output_format == "parquet":
-            # 保存 image split（image + pdf）
-            if image_results:
-                if request.shard_size_mb > 0:
-                    image_files = converter.save_to_parquet_sharded(
-                        image_results,
-                        output_dir=str(output_dir),
-                        output_prefix="train-image",  # image split
-                        max_shard_size_mb=request.shard_size_mb,
-                    )
-                    output_files.extend(image_files)
-                else:
-                    image_file = "train-image.parquet"
-                    converter.save_to_parquet(image_results, str(output_dir / image_file))
-                    output_files.append(image_file)
-
-            # 保存 video split
-            if video_results:
-                if request.shard_size_mb > 0:
-                    video_files = converter.save_to_parquet_sharded(
-                        video_results,
-                        output_dir=str(output_dir),
-                        output_prefix="train-video",  # video split
-                        max_shard_size_mb=request.shard_size_mb,
-                    )
-                    output_files.extend(video_files)
-                else:
-                    video_file = "train-video.parquet"
-                    converter.save_to_parquet(video_results, str(output_dir / video_file))
-                    output_files.append(video_file)
+            # 保存为 Parquet（使用 HuggingFace datasets）
+            if request.shard_size_mb > 0:
+                # 分片保存
+                output_files = converter.save_to_parquet_sharded(
+                    results,
+                    output_dir=str(output_dir),
+                    output_prefix="train",
+                    max_shard_size_mb=request.shard_size_mb,
+                )
+            else:
+                # 单文件保存
+                output_file = "train.parquet"
+                converter.save_to_parquet(results, str(output_dir / output_file))
+                output_files = [output_file]
 
             # 生成 dataset_infos.json（仅 Parquet 格式）
-            total_samples = len(image_results) + len(video_results)
             converter.generate_dataset_infos(
                 output_files=output_files,
-                num_samples=total_samples,
+                num_samples=len(results),
             )
 
         elif request.output_format == "jsonl":
-            # JSONL 格式也分开保存
-            if image_results:
-                image_file = "train-image.jsonl"
-                converter.save_to_jsonl(image_results, str(output_dir / image_file))
-                output_files.append(image_file)
-
-            if video_results:
-                video_file = "train-video.jsonl"
-                converter.save_to_jsonl(video_results, str(output_dir / video_file))
-                output_files.append(video_file)
+            # 保存为 JSONL
+            output_file = "train.jsonl"
+            converter.save_to_jsonl(results, str(output_dir / output_file))
+            output_files = [output_file]
         else:
             raise HTTPException(
                 status_code=400,
@@ -783,7 +759,7 @@ async def convert_annotation_dataset(request: ConvertRequest):
             )
 
         # 获取统计信息
-        stats = converter.get_statistics(results_dict)
+        stats = converter.get_statistics(results)
 
         return ConvertResponse(
             status="success",

@@ -1,5 +1,5 @@
 """
-数据集转换服务（重构版）
+数据集转换服务（使用 HuggingFace datasets）
 将标注数据转换为 HuggingFace Datasets 格式（Parquet）
 基于标注平台的转换逻辑，适配训练平台的目录结构
 
@@ -11,10 +11,27 @@
 5. Video 不转 base64（太大），使用绝对路径，让模型学会识别 raw_response 中的问题帧
 6. dataset_infos.json 保存在项目根目录（与 data 平行）
 
-数据格式:
-- 内存中: messages/images/videos 都是 list
-- Parquet 中: 序列化为 JSON 字符串（兼容性）
-- 训练时: ms-swift 会自动反序列化
+统一 Schema:
+- 所有样本都有 messages、images、videos 字段
+- 没有的字段设为空列表 []
+- 避免 Parquet 列不统一问题
+
+数据保存:
+- 使用 Dataset.from_list() 创建 Dataset
+- 使用 dataset.to_parquet() 保存（自动处理复杂类型）
+- 不需要手动序列化/反序列化
+- load_dataset() 可以直接加载，保持原生数据结构
+
+示例数据结构:
+{
+    "messages": [{"role": "user", "content": "..."}, ...],  # list of dict
+    "images": ["base64...", ...],  # list of base64 strings (可为空)
+    "videos": ["/path/to/video.mp4", ...],  # list of paths (可为空)
+    "source_file": "...",
+    "media_type": "image" | "pdf" | "video",
+    "llm_provider": "...",
+    "model_name": "..."
+}
 """
 
 import json
@@ -22,7 +39,6 @@ import base64
 import os
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Callable
-import pandas as pd
 from PIL import Image
 import io
 import logging
@@ -84,7 +100,7 @@ class DatasetConverter:
             inst_data: instruction 数据
 
         Returns:
-            转换后的数据（使用 uploads 中的原始图片）
+            转换后的数据（统一 schema）
         """
         image_rel_path = inst_data["image"]
 
@@ -104,9 +120,11 @@ class DatasetConverter:
             {"role": "assistant", "content": inst_data["raw_response"]},
         ]
 
+        # 统一 schema：所有样本都有 images 和 videos 字段
         return {
-            "messages": messages,  # 保持为 list
-            "images": [image_b64],  # 保持为 list
+            "messages": messages,  # list of dict
+            "images": [image_b64],  # list of base64 strings
+            "videos": [],  # 空列表（该样本没有视频）
             "source_file": str(image_rel_path),
             "media_type": "image",
             "llm_provider": inst_data.get("llm_provider", ""),
@@ -124,7 +142,7 @@ class DatasetConverter:
             inst_data: instruction 数据
 
         Returns:
-            转换后的数据
+            转换后的数据（统一 schema）
         """
         pdf_rel_path = inst_data["pdf"]
 
@@ -177,9 +195,11 @@ class DatasetConverter:
             {"role": "assistant", "content": inst_data["raw_response"]},
         ]
 
+        # 统一 schema：所有样本都有 images 和 videos 字段
         return {
-            "messages": messages,  # 保持为 list
-            "images": images_b64,  # 保持为 list
+            "messages": messages,  # list of dict
+            "images": images_b64,  # list of base64 strings
+            "videos": [],  # 空列表（该样本没有视频）
             "source_file": str(pdf_rel_path),
             "media_type": "pdf",
             "llm_provider": inst_data.get("llm_provider", ""),
@@ -197,7 +217,7 @@ class DatasetConverter:
             inst_data: instruction 数据
 
         Returns:
-            转换后的数据
+            转换后的数据（统一 schema）
         """
         video_rel_path = inst_data["video"]
 
@@ -214,9 +234,11 @@ class DatasetConverter:
             {"role": "assistant", "content": inst_data["raw_response"]},
         ]
 
+        # 统一 schema：所有样本都有 images 和 videos 字段
         return {
-            "messages": messages,  # 保持为 list
-            "videos": [str(upload_path)],  # 保持为 list，使用绝对路径
+            "messages": messages,  # list of dict
+            "images": [],  # 空列表（该样本没有图片）
+            "videos": [str(upload_path)],  # list of paths
             "source_file": str(video_rel_path),
             "media_type": "video",
             "llm_provider": inst_data.get("llm_provider", ""),
@@ -227,26 +249,21 @@ class DatasetConverter:
         self,
         use_overlay: bool = False,  # 不再使用 overlay
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
-    ) -> Dict[str, List[Dict]]:
+    ) -> List[Dict]:
         """
-        转换所有 instruction 文件（按媒体类型分类）
+        转换所有 instruction 文件
 
         扫描 instructions/ 下的所有 JSON 文件（递归）
+        所有样本使用统一 schema（images 和 videos 字段都存在，没有就是空列表）
 
         Args:
             use_overlay: 忽略（不再使用 overlay）
             progress_callback: 进度回调函数 (current, total, filename)
 
         Returns:
-            分类的数据字典:
-            {
-                "image": [...],  # image 和 pdf 数据（都是图片）
-                "video": [...],  # video 数据
-            }
+            转换后的数据列表（统一 schema）
         """
-        # 分类存储
-        image_results = []  # image 和 pdf（都是图片）
-        video_results = []  # video
+        results = []
 
         instruction_files = list(self.instructions_dir.rglob("*.json"))
         total_files = len(instruction_files)
@@ -266,17 +283,14 @@ class DatasetConverter:
                 if "image" in inst_data:
                     result = self.process_image_instruction(inst_data)
                     if result:
-                        image_results.append(result)
                         stats["image"] += 1
                 elif "pdf" in inst_data:
                     result = self.process_pdf_instruction(inst_data)
                     if result:
-                        image_results.append(result)  # PDF 也是图片
                         stats["pdf"] += 1
                 elif "video" in inst_data:
                     result = self.process_video_instruction(inst_data)
                     if result:
-                        video_results.append(result)
                         stats["video"] += 1
                 else:
                     logger.warning(f"未知类型: {inst_file}")
@@ -284,6 +298,7 @@ class DatasetConverter:
                     continue
 
                 if result:
+                    results.append(result)
                     logger.debug(f"[{idx}/{total_files}] 处理成功: {inst_file.name}")
                 else:
                     stats["skipped"] += 1
@@ -297,47 +312,32 @@ class DatasetConverter:
                 stats["skipped"] += 1
                 continue
 
-        total_samples = len(image_results) + len(video_results)
-        logger.info(f"转换完成: {total_samples}/{total_files} 个样本")
-        logger.info(f"  - 图片数据（image + pdf）: {len(image_results)}")
-        logger.info(f"  - 视频数据: {len(video_results)}")
+        logger.info(f"转换完成: {len(results)}/{total_files} 个样本")
         logger.info(f"统计: 图片={stats['image']}, PDF={stats['pdf']}, 视频={stats['video']}, 跳过={stats['skipped']}")
 
-        return {
-            "image": image_results,
-            "video": video_results,
-        }
+        return results
 
     def save_to_parquet(
         self, results: List[Dict], output_path: str, compression: str = "snappy"
     ):
         """
-        保存为单个 Parquet 文件
+        保存为单个 Parquet 文件（使用 HuggingFace datasets）
 
-        将 list 字段序列化为 JSON 字符串以兼容 Parquet
+        使用 Dataset.from_list() + dataset.to_parquet() 自动处理复杂类型
+        不需要手动序列化 list 字段
         """
-        # 序列化 list 字段
-        serialized_results = []
-        for sample in results:
-            serialized_sample = sample.copy()
+        try:
+            from datasets import Dataset
+        except ImportError:
+            logger.error("datasets 库未安装，请安装: pip install datasets")
+            raise
 
-            # 序列化 messages
-            if "messages" in serialized_sample and isinstance(serialized_sample["messages"], list):
-                serialized_sample["messages"] = json.dumps(serialized_sample["messages"], ensure_ascii=False)
+        # 直接从 list of dict 创建 Dataset（自动推断 schema）
+        dataset = Dataset.from_list(results)
 
-            # 序列化 images
-            if "images" in serialized_sample and isinstance(serialized_sample["images"], list):
-                serialized_sample["images"] = json.dumps(serialized_sample["images"], ensure_ascii=False)
-
-            # 序列化 videos
-            if "videos" in serialized_sample and isinstance(serialized_sample["videos"], list):
-                serialized_sample["videos"] = json.dumps(serialized_sample["videos"], ensure_ascii=False)
-
-            serialized_results.append(serialized_sample)
-
-        df = pd.DataFrame(serialized_results)
-        df.to_parquet(output_path, engine="pyarrow", compression=compression, index=False)
-        logger.info(f"保存到: {output_path}")
+        # 保存为 Parquet（自动处理复杂类型）
+        dataset.to_parquet(output_path)
+        logger.info(f"✓ 保存到: {output_path}")
 
     def save_to_jsonl(self, results: List[Dict], output_path: str):
         """
@@ -358,12 +358,10 @@ class DatasetConverter:
         max_shard_size_mb: int = 500,
     ) -> List[str]:
         """
-        自动分片保存（Parquet 格式）
-
-        将 list 字段序列化为 JSON 字符串以兼容 Parquet
+        自动分片保存（使用 HuggingFace datasets）
 
         Args:
-            results: 转换后的数据（messages/images/videos 为 list）
+            results: 转换后的数据（统一 schema）
             output_dir: 输出目录
             output_prefix: 文件前缀
             max_shard_size_mb: 每个分片最大大小（MB）
@@ -371,39 +369,33 @@ class DatasetConverter:
         Returns:
             生成的文件名列表
         """
+        try:
+            from datasets import Dataset
+        except ImportError:
+            logger.error("datasets 库未安装，请安装: pip install datasets")
+            raise
+
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # 序列化 list 字段为 JSON 字符串（Parquet 兼容）
-        serialized_results = []
-        for sample in results:
-            serialized_sample = sample.copy()
+        # 创建 Dataset（自动推断 schema）
+        dataset = Dataset.from_list(results)
 
-            # 序列化 messages
-            if "messages" in serialized_sample and isinstance(serialized_sample["messages"], list):
-                serialized_sample["messages"] = json.dumps(serialized_sample["messages"], ensure_ascii=False)
-
-            # 序列化 images
-            if "images" in serialized_sample and isinstance(serialized_sample["images"], list):
-                serialized_sample["images"] = json.dumps(serialized_sample["images"], ensure_ascii=False)
-
-            # 序列化 videos
-            if "videos" in serialized_sample and isinstance(serialized_sample["videos"], list):
-                serialized_sample["videos"] = json.dumps(serialized_sample["videos"], ensure_ascii=False)
-
-            serialized_results.append(serialized_sample)
-
-        # 预估每个样本的大小
+        # 预估每个样本的大小（用于分片）
         def estimate_size(sample: Dict) -> int:
             """估算样本大小（字节）"""
             size = 0
-            # images/videos 字段（JSON 字符串）
-            for key in ["images", "videos"]:
-                if key in sample:
-                    size += len(sample[key])
-            # messages 字段（JSON 字符串）
+            # images 字段（base64 字符串列表）
+            if "images" in sample:
+                for img in sample["images"]:
+                    size += len(img) if isinstance(img, str) else 0
+            # videos 字段（路径列表）
+            if "videos" in sample:
+                for vid in sample["videos"]:
+                    size += len(vid) if isinstance(vid, str) else 0
+            # messages 字段（估算 JSON 大小）
             if "messages" in sample:
-                size += len(sample["messages"])
+                size += len(json.dumps(sample["messages"]))
             # 其他字段
             for key in ["source_file", "media_type", "llm_provider", "model_name"]:
                 if key in sample:
@@ -412,25 +404,25 @@ class DatasetConverter:
 
         # 分片
         shards = []
-        current_shard = []
+        current_shard_indices = []
         current_size = 0
         max_size_bytes = max_shard_size_mb * 1024 * 1024
 
-        for sample in serialized_results:
+        for idx, sample in enumerate(results):
             sample_size = estimate_size(sample)
 
             # 检查是否需要创建新分片
-            if current_size + sample_size > max_size_bytes and current_shard:
-                shards.append(current_shard)
-                current_shard = []
+            if current_size + sample_size > max_size_bytes and current_shard_indices:
+                shards.append(current_shard_indices)
+                current_shard_indices = []
                 current_size = 0
 
-            current_shard.append(sample)
+            current_shard_indices.append(idx)
             current_size += sample_size
 
         # 添加最后一个分片
-        if current_shard:
-            shards.append(current_shard)
+        if current_shard_indices:
+            shards.append(current_shard_indices)
 
         total_shards = len(shards)
         logger.info(f"数据将分为 {total_shards} 个分片")
@@ -438,16 +430,19 @@ class DatasetConverter:
         output_files = []
 
         # 保存每个分片
-        for idx, shard in enumerate(shards):
-            filename = f"{output_prefix}-{idx:05d}-of-{total_shards:05d}.parquet"
+        for shard_idx, indices in enumerate(shards):
+            filename = f"{output_prefix}-{shard_idx:05d}-of-{total_shards:05d}.parquet"
             filepath = output_path / filename
 
-            df = pd.DataFrame(shard)
-            df.to_parquet(filepath, engine="pyarrow", compression="snappy", index=False)
+            # 选择分片数据
+            shard_dataset = dataset.select(indices)
+
+            # 保存（自动处理复杂类型）
+            shard_dataset.to_parquet(str(filepath))
 
             shard_size_mb = filepath.stat().st_size / (1024 * 1024)
             logger.info(
-                f"✓ {filename} ({len(shard)} 样本, {shard_size_mb:.1f}MB)"
+                f"✓ {filename} ({len(indices)} 样本, {shard_size_mb:.1f}MB)"
             )
             output_files.append(filename)
 
@@ -511,23 +506,18 @@ class DatasetConverter:
         logger.info(f"✓ 生成 dataset_infos.json: {infos_path}")
         return dataset_infos
 
-    def get_statistics(self, results_dict: Dict[str, List[Dict]]) -> Dict[str, Any]:
+    def get_statistics(self, results: List[Dict]) -> Dict[str, Any]:
         """
-        获取数据集统计信息（支持分类数据）
+        获取数据集统计信息
 
         Args:
-            results_dict: 分类的数据字典 {"image": [...], "video": [...]}
+            results: 转换后的数据列表
 
         Returns:
             统计信息
         """
-        image_results = results_dict.get("image", [])
-        video_results = results_dict.get("video", [])
-
         stats = {
-            "total_samples": len(image_results) + len(video_results),
-            "image_samples": len(image_results),
-            "video_samples": len(video_results),
+            "total_samples": len(results),
             "media_types": {"image": 0, "pdf": 0, "video": 0},
             "total_images": 0,
             "total_videos": 0,
@@ -535,37 +525,22 @@ class DatasetConverter:
             "models": {},
         }
 
-        # 统计所有数据
-        all_results = image_results + video_results
-
-        for result in all_results:
+        for result in results:
             media_type = result.get("media_type", "unknown")
 
             # 统计媒体类型
             if media_type in stats["media_types"]:
                 stats["media_types"][media_type] += 1
 
-            # 统计图片数量（兼容 list 和 JSON 字符串）
+            # 统计图片数量（原生 list）
             images_data = result.get("images", [])
             if isinstance(images_data, list):
                 stats["total_images"] += len(images_data)
-            elif isinstance(images_data, str):
-                try:
-                    images_list = json.loads(images_data)
-                    stats["total_images"] += len(images_list)
-                except:
-                    pass
 
-            # 统计视频数量（兼容 list 和 JSON 字符串）
+            # 统计视频数量（原生 list）
             videos_data = result.get("videos", [])
             if isinstance(videos_data, list):
                 stats["total_videos"] += len(videos_data)
-            elif isinstance(videos_data, str):
-                try:
-                    videos_list = json.loads(videos_data)
-                    stats["total_videos"] += len(videos_list)
-                except:
-                    pass
 
             # 统计 LLM 提供商
             provider = result.get("llm_provider", "unknown")
