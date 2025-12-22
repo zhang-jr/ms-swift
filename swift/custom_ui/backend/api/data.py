@@ -231,11 +231,14 @@ async def upload_folder(
     """
     上传数据集文件夹（批量上传）
 
-    前端需要将文件夹内所有文件一起上传，并指定文件夹名称
+    **保留完整的目录结构**：
+    - 前端通过 webkitRelativePath 传递文件的相对路径
+    - 后端根据相对路径重建完整的目录层级
+    - 例如：用户上传 "project/data/train.csv"，将保存为 "{folder_name}/data/train.csv"
 
     Args:
-        files: 文件列表
-        folder_name: 文件夹名称（通过 Form 字段传递）
+        files: 文件列表（filename 包含相对路径）
+        folder_name: 根文件夹名称（通过 Form 字段传递）
 
     Returns:
         dict: 上传结果
@@ -243,30 +246,66 @@ async def upload_folder(
     if not folder_name:
         raise HTTPException(status_code=400, detail="必须指定文件夹名称")
 
-    # 创建文件夹
-    folder_path = DATA_DIR / folder_name
-    if folder_path.exists():
+    # 创建根文件夹
+    root_folder = DATA_DIR / folder_name
+    if root_folder.exists():
         raise HTTPException(status_code=409, detail=f"文件夹 {folder_name} 已存在")
 
     try:
-        folder_path.mkdir(parents=True, exist_ok=False)
+        root_folder.mkdir(parents=True, exist_ok=False)
 
-        # 设置文件夹权限为 755 (drwxr-xr-x)，确保所有用户都能读取
+        # 设置根文件夹权限为 755 (drwxr-xr-x)
         try:
-            os.chmod(folder_path, 0o755)
-            print(f"Set folder permissions to 755 for {folder_path}")
+            os.chmod(root_folder, 0o755)
+            print(f"Created root folder: {root_folder}")
         except Exception as e:
             print(f"Warning: Failed to set folder permissions: {e}")
 
         total_size = 0
         uploaded_files = []
+        created_dirs = set()  # 跟踪已创建的目录，避免重复设置权限
 
         for file in files:
-            # 保存文件到文件夹
-            safe_filename = Path(file.filename).name
-            filepath = folder_path / safe_filename
+            # 从文件名中提取相对路径
+            # file.filename 可能包含完整的相对路径（如 "project/subdir/file.txt"）
+            relative_path = file.filename
 
-            with open(filepath, "wb") as buffer:
+            # 安全性检查：防止路径遍历攻击
+            # 移除开头的 "./" 和路径中的 ".."
+            relative_path = relative_path.lstrip("./")
+            if ".." in relative_path or relative_path.startswith("/"):
+                print(f"Skipping unsafe path: {relative_path}")
+                continue
+
+            # 解析路径：去掉第一层目录（因为用户选择的根文件夹名称）
+            # 例如：用户选择了 "my_project" 文件夹，webkitRelativePath 是 "my_project/data/train.csv"
+            # 我们应该保存为 "{folder_name}/data/train.csv"
+            path_parts = Path(relative_path).parts
+
+            # 如果只有一个部分（文件名），直接保存到根目录
+            if len(path_parts) == 1:
+                target_relative_path = relative_path
+            else:
+                # 去掉第一层（用户选择的根文件夹名），保留后续的目录结构
+                target_relative_path = str(Path(*path_parts[1:]))
+
+            # 目标文件路径
+            target_path = root_folder / target_relative_path
+
+            # 创建必要的子目录
+            target_dir = target_path.parent
+            if target_dir != root_folder and target_dir not in created_dirs:
+                target_dir.mkdir(parents=True, exist_ok=True)
+                # 设置子目录权限
+                try:
+                    os.chmod(target_dir, 0o755)
+                    print(f"Created subdirectory: {target_dir.relative_to(DATA_DIR)}")
+                except Exception as e:
+                    print(f"Warning: Failed to set permissions for {target_dir}: {e}")
+                created_dirs.add(target_dir)
+
+            # 保存文件
+            with open(target_path, "wb") as buffer:
                 file_size = 0
                 while chunk := await file.read(1024 * 1024):
                     file_size += len(chunk)
@@ -274,25 +313,26 @@ async def upload_folder(
 
             # 设置文件权限为 644 (-rw-r--r--)
             try:
-                os.chmod(filepath, 0o644)
+                os.chmod(target_path, 0o644)
             except Exception as e:
-                print(f"Warning: Failed to set file permissions for {filepath}: {e}")
+                print(f"Warning: Failed to set file permissions for {target_path}: {e}")
 
             total_size += file_size
-            uploaded_files.append(safe_filename)
+            uploaded_files.append(target_relative_path)
+            print(f"Uploaded: {target_relative_path} ({file_size} bytes)")
 
         return {
             "folder_name": folder_name,
             "file_count": len(uploaded_files),
             "total_size_mb": round(total_size / (1024 * 1024), 2),
             "files": uploaded_files,
-            "message": f"成功上传文件夹 {folder_name}，共 {len(uploaded_files)} 个文件"
+            "message": f"成功上传文件夹 {folder_name}，共 {len(uploaded_files)} 个文件（保留目录结构）"
         }
 
     except Exception as e:
         # 清理失败的上传
-        if folder_path.exists():
-            shutil.rmtree(folder_path)
+        if root_folder.exists():
+            shutil.rmtree(root_folder)
         raise HTTPException(status_code=500, detail=f"文件夹上传失败: {str(e)}")
 
 @router.get("/list", response_model=List[DatasetInfo])

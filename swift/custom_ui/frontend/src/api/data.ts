@@ -83,11 +83,22 @@ export const uploadFile = async (file: File): Promise<UploadResponse> => {
 
 /**
  * 上传文件夹（批量上传）
+ *
+ * 保留完整的目录结构：
+ * - 使用 file.webkitRelativePath 获取文件的相对路径
+ * - 通过 FormData 的第三个参数传递相对路径
+ * - 后端根据相对路径重建目录结构
  */
 export const uploadFolder = async (files: File[], folderName: string): Promise<UploadFolderResponse> => {
   const formData = new FormData()
+
   files.forEach((file) => {
-    formData.append('files', file)
+    // 使用 webkitRelativePath 或 name 作为文件名
+    // webkitRelativePath 包含完整的相对路径（如 "project/subdir/file.txt"）
+    const relativePath = (file as any).webkitRelativePath || file.name
+
+    // FormData.append(name, blob, filename) 的第三个参数会被后端识别为文件名
+    formData.append('files', file, relativePath)
   })
   formData.append('folder_name', folderName)
 
