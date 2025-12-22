@@ -1,188 +1,229 @@
 """
-推理 API 端点
-提供模型推理和对话相关的 API
+推理 API 端点 - OpenAI 兼容格式
+通过已部署的 vllm 服务进行推理
 """
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import Optional, List, Dict, Any
-import uuid
+from typing import List, Dict, Optional, Any
+import logging
+import json
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
-# 请求模型
-class LoadModelRequest(BaseModel):
-    model_id_or_path: str
-    adapter_path: Optional[str] = None  # LoRA adapter 路径
-    model_type: Optional[str] = None
+# 导入服务
+from services.deploy_service import deploy_service
+from services.infer_service import infer_service
 
-    # 推理参数
-    max_length: int = 2048
+
+# 请求/响应模型
+class ChatMessage(BaseModel):
+    """对话消息"""
+    role: str  # user, assistant, system
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
+    """对话补全请求（OpenAI 格式）"""
+    deployment_id: str  # 部署 ID
+    messages: List[ChatMessage]
     temperature: float = 0.7
-    top_p: float = 0.9
-    top_k: int = 50
-    repetition_penalty: float = 1.0
-
-    # 量化参数
-    quantization_bit: Optional[int] = None  # 4, 8
-
-class ChatRequest(BaseModel):
-    query: str
-    history: Optional[List[List[str]]] = None
-    system: Optional[str] = None
-
-    # 推理参数覆盖
-    max_new_tokens: Optional[int] = 512
-    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    stream: bool = False
     top_p: Optional[float] = None
-    top_k: Optional[int] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
 
-class ChatResponse(BaseModel):
-    response: str
-    history: List[List[str]]
-    usage: Dict[str, int]  # token 使用统计
 
-# 已加载模型的存储
-loaded_models: Dict[str, Dict[str, Any]] = {}
-current_model_id: Optional[str] = None
+class SimpleChatRequest(BaseModel):
+    """简化的对话请求（兼容旧版本）"""
+    deployment_id: str  # 部署 ID
+    query: str
+    history: Optional[List[List[str]]] = None  # [[user1, bot1], [user2, bot2], ...]
+    system: Optional[str] = None
+    temperature: float = 0.7
+    max_tokens: Optional[int] = None
 
-@router.post("/load-model")
-async def load_model(request: LoadModelRequest):
+
+@router.post("/chat/completions")
+async def chat_completions(request: ChatCompletionRequest):
     """
-    加载模型用于推理
+    OpenAI 兼容的对话补全接口
 
-    Args:
-        request: 模型加载请求
-
-    Returns:
-        dict: 加载结果
-    """
-    global current_model_id
-
-    # 生成模型实例 ID
-    model_instance_id = str(uuid.uuid4())
-
-    # TODO: 实际加载模型
-    # from services.infer_service import InferService
-    # infer_service = InferService()
-    # model = infer_service.load_model(request.model_dump())
-
-    # 模拟加载
-    loaded_models[model_instance_id] = {
-        "model_id": request.model_id_or_path,
-        "adapter_path": request.adapter_path,
-        "config": request.model_dump(),
-        "loaded_at": "2025-12-03T00:00:00"
-    }
-
-    current_model_id = model_instance_id
-
-    return {
-        "message": "模型加载成功",
-        "model_instance_id": model_instance_id,
-        "model_id": request.model_id_or_path
-    }
-
-@router.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    """
-    与模型对话
-
-    Args:
-        request: 对话请求
-
-    Returns:
-        ChatResponse: 模型响应
-    """
-    global current_model_id
-
-    if not current_model_id or current_model_id not in loaded_models:
-        raise HTTPException(status_code=400, detail="请先加载模型")
-
-    # TODO: 实际推理
-    # from services.infer_service import InferService
-    # infer_service = InferService()
-    # response = infer_service.chat(current_model_id, request.model_dump())
-
-    # 模拟推理响应
-    history = request.history or []
-    history.append([request.query, "这是一个模拟响应。实际响应需要集成 ms-swift 推理功能。"])
-
-    return ChatResponse(
-        response="这是一个模拟响应。实际响应需要集成 ms-swift 推理功能。",
-        history=history,
-        usage={
-            "prompt_tokens": 10,
-            "completion_tokens": 20,
-            "total_tokens": 30
+    示例:
+        POST /api/infer/chat/completions
+        {
+            "deployment_id": "deploy-12345678",
+            "messages": [
+                {"role": "user", "content": "你好"}
+            ],
+            "temperature": 0.7
         }
-    )
-
-@router.post("/unload-model")
-async def unload_model(model_instance_id: Optional[str] = None):
-    """
-    卸载模型
 
     Args:
-        model_instance_id: 模型实例 ID，为空则卸载当前模型
+        request: 对话补全请求
 
     Returns:
-        dict: 卸载结果
+        dict: OpenAI 格式的响应
     """
-    global current_model_id
+    # 检查部署是否存在
+    deployment = deploy_service.get_deployment_status(request.deployment_id)
 
-    target_id = model_instance_id or current_model_id
+    if deployment["status"] == "not_found":
+        raise HTTPException(status_code=404, detail=f"部署 {request.deployment_id} 不存在")
 
-    if not target_id or target_id not in loaded_models:
-        raise HTTPException(status_code=404, detail="模型不存在")
+    if deployment["status"] != "running":
+        raise HTTPException(
+            status_code=503,
+            detail=f"部署 {request.deployment_id} 状态为 {deployment['status']}，无法提供服务"
+        )
 
-    # TODO: 实际卸载模型
-    del loaded_models[target_id]
+    # 转换消息格式
+    messages = [{"role": msg.role, "content": msg.content} for msg in request.messages]
 
-    if current_model_id == target_id:
-        current_model_id = None
+    # 构建请求参数
+    kwargs = {}
+    if request.top_p is not None:
+        kwargs["top_p"] = request.top_p
+    if request.frequency_penalty is not None:
+        kwargs["frequency_penalty"] = request.frequency_penalty
+    if request.presence_penalty is not None:
+        kwargs["presence_penalty"] = request.presence_penalty
 
-    return {
-        "message": "模型已卸载",
-        "model_instance_id": target_id
-    }
+    try:
+        if request.stream:
+            # 流式响应
+            return StreamingResponse(
+                _stream_chat_generator(
+                    deployment["base_url"],
+                    deployment["served_model_name"],
+                    messages,
+                    request.temperature,
+                    request.max_tokens,
+                    **kwargs
+                ),
+                media_type="text/event-stream"
+            )
+        else:
+            # 非流式响应
+            result = infer_service.chat_completions(
+                base_url=deployment["base_url"],
+                model=deployment["served_model_name"],
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                stream=False,
+                **kwargs
+            )
+            return result
 
-@router.get("/loaded-models")
-async def get_loaded_models():
+    except RuntimeError as e:
+        logger.error(f"推理失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _stream_chat_generator(
+    base_url: str,
+    model: str,
+    messages: List[Dict[str, str]],
+    temperature: float,
+    max_tokens: Optional[int],
+    **kwargs
+):
+    """流式响应生成器"""
+    try:
+        for chunk in infer_service.chat_completions(
+            base_url=base_url,
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            stream=True,
+            **kwargs
+        ):
+            # SSE 格式
+            yield f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+
+        # 结束标记
+        yield "data: [DONE]\n\n"
+
+    except Exception as e:
+        logger.error(f"流式推理失败: {e}")
+        error_data = {"error": str(e)}
+        yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+
+
+@router.post("/chat")
+async def simple_chat(request: SimpleChatRequest):
     """
-    获取已加载的模型列表
+    简化的对话接口（兼容旧版本）
+
+    示例:
+        POST /api/infer/chat
+        {
+            "deployment_id": "deploy-12345678",
+            "query": "你好",
+            "history": [["上一轮问题", "上一轮回答"]],
+            "system": "你是一个有帮助的助手"
+        }
+
+    Args:
+        request: 简化对话请求
+
+    Returns:
+        dict: 包含 response, history, usage 的字典
+    """
+    # 检查部署是否存在
+    deployment = deploy_service.get_deployment_status(request.deployment_id)
+
+    if deployment["status"] == "not_found":
+        raise HTTPException(status_code=404, detail=f"部署 {request.deployment_id} 不存在")
+
+    if deployment["status"] != "running":
+        raise HTTPException(
+            status_code=503,
+            detail=f"部署 {request.deployment_id} 状态为 {deployment['status']}，无法提供服务"
+        )
+
+    try:
+        result = infer_service.simple_chat(
+            base_url=deployment["base_url"],
+            model=deployment["served_model_name"],
+            query=request.query,
+            history=request.history,
+            system=request.system,
+            temperature=request.temperature,
+            max_tokens=request.max_tokens,
+        )
+        return result
+
+    except RuntimeError as e:
+        logger.error(f"推理失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/models/{deployment_id}")
+async def get_models(deployment_id: str):
+    """
+    获取部署的模型列表
+
+    Args:
+        deployment_id: 部署 ID
 
     Returns:
         dict: 模型列表
     """
-    models = []
-    for model_id, model_info in loaded_models.items():
-        models.append({
-            "model_instance_id": model_id,
-            "model_id": model_info["model_id"],
-            "adapter_path": model_info["adapter_path"],
-            "is_current": model_id == current_model_id,
-            "loaded_at": model_info["loaded_at"]
-        })
+    # 检查部署是否存在
+    deployment = deploy_service.get_deployment_status(deployment_id)
 
-    return {"models": models}
+    if deployment["status"] == "not_found":
+        raise HTTPException(status_code=404, detail=f"部署 {deployment_id} 不存在")
 
-@router.get("/current-model")
-async def get_current_model():
-    """
-    获取当前使用的模型信息
+    try:
+        models = infer_service.get_models(deployment["base_url"])
+        return {"models": models}
 
-    Returns:
-        dict: 当前模型信息
-    """
-    if not current_model_id or current_model_id not in loaded_models:
-        return {"current_model": None}
-
-    model_info = loaded_models[current_model_id]
-    return {
-        "current_model": {
-            "model_instance_id": current_model_id,
-            "model_id": model_info["model_id"],
-            "adapter_path": model_info["adapter_path"],
-            "loaded_at": model_info["loaded_at"]
-        }
-    }
+    except Exception as e:
+        logger.error(f"获取模型列表失败: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
