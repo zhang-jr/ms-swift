@@ -323,19 +323,32 @@ class DatasetConverter:
         """
         保存为单个 Parquet 文件（使用 HuggingFace datasets）
 
-        使用 Dataset.from_list() + dataset.to_parquet() 自动处理复杂类型
-        不需要手动序列化 list 字段
+        使用显式 Features 定义避免 schema 推断问题
         """
         try:
-            from datasets import Dataset
+            from datasets import Dataset, Features, Value, Sequence
         except ImportError:
             logger.error("datasets 库未安装，请安装: pip install datasets")
             raise
 
-        # 直接从 list of dict 创建 Dataset（自动推断 schema）
-        dataset = Dataset.from_list(results)
+        # 显式定义 Features（避免 schema 推断问题）
+        features = Features({
+            "messages": Sequence({
+                "role": Value("string"),
+                "content": Value("string")
+            }),
+            "images": Sequence(Value("string")),  # list of base64 strings
+            "videos": Sequence(Value("string")),  # list of paths
+            "source_file": Value("string"),
+            "media_type": Value("string"),
+            "llm_provider": Value("string"),
+            "model_name": Value("string"),
+        })
 
-        # 保存为 Parquet（自动处理复杂类型）
+        # 从 list of dict 创建 Dataset（使用显式 Features）
+        dataset = Dataset.from_list(results, features=features)
+
+        # 保存为 Parquet
         dataset.to_parquet(output_path)
         logger.info(f"✓ 保存到: {output_path}")
 
@@ -360,6 +373,8 @@ class DatasetConverter:
         """
         自动分片保存（使用 HuggingFace datasets）
 
+        使用显式 Features 定义避免 schema 推断问题
+
         Args:
             results: 转换后的数据（统一 schema）
             output_dir: 输出目录
@@ -370,7 +385,7 @@ class DatasetConverter:
             生成的文件名列表
         """
         try:
-            from datasets import Dataset
+            from datasets import Dataset, Features, Value, Sequence
         except ImportError:
             logger.error("datasets 库未安装，请安装: pip install datasets")
             raise
@@ -378,8 +393,22 @@ class DatasetConverter:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # 创建 Dataset（自动推断 schema）
-        dataset = Dataset.from_list(results)
+        # 显式定义 Features（避免 schema 推断问题）
+        features = Features({
+            "messages": Sequence({
+                "role": Value("string"),
+                "content": Value("string")
+            }),
+            "images": Sequence(Value("string")),  # list of base64 strings
+            "videos": Sequence(Value("string")),  # list of paths
+            "source_file": Value("string"),
+            "media_type": Value("string"),
+            "llm_provider": Value("string"),
+            "model_name": Value("string"),
+        })
+
+        # 创建 Dataset（使用显式 Features）
+        dataset = Dataset.from_list(results, features=features)
 
         # 预估每个样本的大小（用于分片）
         def estimate_size(sample: Dict) -> int:
