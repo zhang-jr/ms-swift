@@ -299,10 +299,40 @@ class DatasetConverter:
         """
         保存为单个 Parquet 文件
 
-        注意: images 字段是字符串（JSON 格式），避免 Parquet 格式问题
+        将 list 字段序列化为 JSON 字符串以兼容 Parquet
         """
-        df = pd.DataFrame(results)
+        # 序列化 list 字段
+        serialized_results = []
+        for sample in results:
+            serialized_sample = sample.copy()
+
+            # 序列化 messages
+            if "messages" in serialized_sample and isinstance(serialized_sample["messages"], list):
+                serialized_sample["messages"] = json.dumps(serialized_sample["messages"], ensure_ascii=False)
+
+            # 序列化 images
+            if "images" in serialized_sample and isinstance(serialized_sample["images"], list):
+                serialized_sample["images"] = json.dumps(serialized_sample["images"], ensure_ascii=False)
+
+            # 序列化 videos
+            if "videos" in serialized_sample and isinstance(serialized_sample["videos"], list):
+                serialized_sample["videos"] = json.dumps(serialized_sample["videos"], ensure_ascii=False)
+
+            serialized_results.append(serialized_sample)
+
+        df = pd.DataFrame(serialized_results)
         df.to_parquet(output_path, engine="pyarrow", compression=compression, index=False)
+        logger.info(f"保存到: {output_path}")
+
+    def save_to_jsonl(self, results: List[Dict], output_path: str):
+        """
+        保存为 JSONL 文件（每行一个 JSON 对象）
+
+        JSONL 格式支持原生的 list，不需要序列化
+        """
+        with open(output_path, "w", encoding="utf-8") as f:
+            for sample in results:
+                f.write(json.dumps(sample, ensure_ascii=False) + "\n")
         logger.info(f"保存到: {output_path}")
 
     def save_to_parquet_sharded(

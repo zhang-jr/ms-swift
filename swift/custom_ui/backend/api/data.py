@@ -745,7 +745,6 @@ async def convert_annotation_dataset(request: ConvertRequest):
             converter.generate_dataset_infos(
                 output_files=output_files,
                 num_samples=len(results),
-                data_dir=output_dir,
             )
 
         elif request.output_format == "jsonl":
