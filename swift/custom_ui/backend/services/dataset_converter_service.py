@@ -1,7 +1,14 @@
 """
-数据集转换服务
+数据集转换服务（重构版）
 将标注数据转换为 HuggingFace Datasets 格式（Parquet）
 基于标注平台的转换逻辑，适配训练平台的目录结构
+
+核心原则:
+1. overlays 只是可视化标注结果，训练数据使用 uploads 中的原始数据
+2. 图片直接转 base64
+3. PDF 从原始 PDF 提取页面图片（使用 PyMuPDF）
+4. Video 暂时只保存路径（文件太大）
+5. dataset_infos.json 保存在项目根目录（与 data 平行）
 """
 
 import json
@@ -21,7 +28,7 @@ DATA_DIR = Path("/app/data")
 
 
 class DatasetConverter:
-    """数据集转换器（适配训练平台）"""
+    """数据集转换器（重构版 - 使用 uploads 原始数据）"""
 
     def __init__(self, project_name: str):
         """
@@ -36,9 +43,8 @@ class DatasetConverter:
 
         self.project_name = project_name
         self.project_root = DATA_DIR / project_name
-        self.instructions_dir = self.project_root / "instructions"  # 改为 instructions（复数）
-        self.overlays_dir = self.project_root / "overlays"
-        self.uploads_dir = self.project_root / "uploads"
+        self.instructions_dir = self.project_root / "instructions"  # 标注数据
+        self.uploads_dir = self.project_root / "uploads"  # 原始媒体文件
         self.data_dir = self.project_root / "data"  # 输出目录
 
         # 验证目录
@@ -64,65 +70,54 @@ class DatasetConverter:
             logger.error(f"图像编码失败 {image_path}: {e}")
             raise
 
-    def process_image_instruction(
-        self, inst_data: Dict, use_overlay: bool = True
-    ) -> Dict:
+    def process_image_instruction(self, inst_data: Dict) -> Optional[Dict]:
         """
         处理图像类型的instruction
 
         Args:
             inst_data: instruction 数据
-            use_overlay: 是否优先使用带标注框的 overlay 图片
+
+        Returns:
+            转换后的数据（使用 uploads 中的原始图片）
         """
         image_rel_path = inst_data["image"]
 
-        # 构建完整路径
+        # 从 uploads 获取原始图片
         upload_path = self.uploads_dir / image_rel_path
 
         if not upload_path.exists():
-            raise FileNotFoundError(f"原始图片不存在: {upload_path}")
+            logger.warning(f"原始图片不存在: {upload_path}")
+            return None
 
-        # 构建overlay路径
-        overlay_path = self._get_overlay_path(image_rel_path, "image")
+        # 转换为 base64
+        image_b64 = self.image_to_base64(upload_path)
 
-        # 选择使用原图还是overlay
-        if use_overlay and overlay_path.exists():
-            image_path = overlay_path
-            logger.debug(f"使用 overlay 图片: {overlay_path}")
-        else:
-            image_path = upload_path
-            logger.debug(f"使用原始图片: {upload_path}")
-
-        # 转换为base64
-        image_b64 = self.image_to_base64(image_path)
-
-        # 构建messages
+        # 构建 messages（多模态格式）
         messages = [
             {"role": "user", "content": f"<image>{inst_data['instruction']}"},
             {"role": "assistant", "content": inst_data["raw_response"]},
         ]
 
         return {
-            "messages": messages,
-            "images": [image_b64],
-            "metadata": {
-                "source_file": str(image_rel_path),
-                "media_type": "image",
-                "llm_provider": inst_data.get("llm_provider"),
-                "model_name": inst_data.get("model_name"),
-                "timestamp": inst_data.get("timestamp"),
-            },
+            "messages": json.dumps(messages, ensure_ascii=False),  # 转为字符串
+            "images": json.dumps([image_b64], ensure_ascii=False),  # 转为字符串
+            "source_file": str(image_rel_path),
+            "media_type": "image",
+            "llm_provider": inst_data.get("llm_provider", ""),
+            "model_name": inst_data.get("model_name", ""),
         }
 
-    def process_pdf_instruction(
-        self, inst_data: Dict, use_overlay: bool = True
-    ) -> Dict:
+    def process_pdf_instruction(self, inst_data: Dict) -> Optional[Dict]:
         """
-        处理PDF类型的instruction
+        处理 PDF 类型的 instruction
+
+        从原始 PDF 提取页面图片（使用 PyMuPDF）
 
         Args:
             inst_data: instruction 数据
-            use_overlay: 是否优先使用带标注框的 overlay 图片
+
+        Returns:
+            转换后的数据
         """
         pdf_rel_path = inst_data["pdf"]
         annotations = inst_data.get("annotations", [])
@@ -130,31 +125,54 @@ class DatasetConverter:
         # 获取所有被标注的页面
         annotated_pages = sorted(set(ann["page"] for ann in annotations if "page" in ann))
 
-        # 如果没有annotations，默认使用第0页
         if not annotated_pages:
-            logger.warning(f"PDF {pdf_rel_path} 没有标注页面，使用第0页")
-            annotated_pages = [0]
+            logger.warning(f"PDF {pdf_rel_path} 没有标注页面")
+            return None
 
-        # 收集所有页面的图像
+        # 从原始 PDF 提取页面图片
+        pdf_path = self.uploads_dir / pdf_rel_path
+
+        if not pdf_path.exists():
+            logger.warning(f"原始 PDF 不存在: {pdf_path}")
+            return None
+
+        try:
+            import pymupdf  # PyMuPDF
+        except ImportError:
+            logger.error("PyMuPDF 未安装，无法处理 PDF。请安装: pip install pymupdf")
+            return None
+
         images_b64 = []
-        for page in annotated_pages:
-            overlay_path = self._get_pdf_overlay_path(pdf_rel_path, page)
 
-            if use_overlay and overlay_path.exists():
-                images_b64.append(self.image_to_base64(overlay_path))
-                logger.debug(f"PDF 页面 {page}: 使用 overlay")
-            else:
-                # TODO: 如果没有overlay，需要从原始PDF提取页面
-                logger.warning(f"PDF 页面 {page}: overlay 不存在 {overlay_path}")
-                # 这里可以添加 PyMuPDF 来从原始PDF提取页面
-                continue
+        try:
+            doc = pymupdf.open(pdf_path)
+
+            for page_num in annotated_pages:
+                if page_num >= len(doc):
+                    logger.warning(f"PDF {pdf_rel_path} 页面 {page_num} 不存在（总页数: {len(doc)}）")
+                    continue
+
+                # 提取页面为图片
+                page = doc[page_num]
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))  # 2x 缩放
+                img_bytes = pix.tobytes("png")
+
+                # 转为 base64
+                image_b64 = base64.b64encode(img_bytes).decode("utf-8")
+                images_b64.append(image_b64)
+
+            doc.close()
+
+        except Exception as e:
+            logger.error(f"从 PDF 提取页面失败 {pdf_path}: {e}")
+            return None
 
         if not images_b64:
-            raise ValueError(f"PDF {pdf_rel_path} 没有可用的图片")
+            logger.warning(f"PDF {pdf_rel_path} 没有可用的页面图片")
+            return None
 
-        # 构建content中的<image>占位符
+        # 构建 messages
         image_placeholders = "".join(["<image>"] * len(images_b64))
-
         messages = [
             {
                 "role": "user",
@@ -164,139 +182,55 @@ class DatasetConverter:
         ]
 
         return {
-            "messages": messages,
-            "images": images_b64,
-            "metadata": {
-                "source_file": str(pdf_rel_path),
-                "media_type": "pdf",
-                "pages": annotated_pages,
-                "annotations": annotations,
-                "llm_provider": inst_data.get("llm_provider"),
-                "model_name": inst_data.get("model_name"),
-                "timestamp": inst_data.get("timestamp"),
-            },
+            "messages": json.dumps(messages, ensure_ascii=False),
+            "images": json.dumps(images_b64, ensure_ascii=False),
+            "source_file": str(pdf_rel_path),
+            "media_type": "pdf",
+            "llm_provider": inst_data.get("llm_provider", ""),
+            "model_name": inst_data.get("model_name", ""),
         }
 
-    def process_video_instruction(
-        self, inst_data: Dict, use_overlay: bool = True
-    ) -> Dict:
+    def process_video_instruction(self, inst_data: Dict) -> Optional[Dict]:
         """
-        处理视频类型的instruction（转为关键帧）
+        处理视频类型的 instruction
+
+        视频文件太大，暂时只保存路径（或跳过）
 
         Args:
             inst_data: instruction 数据
-            use_overlay: 是否优先使用带标注框的 overlay 图片
+
+        Returns:
+            转换后的数据（或 None 跳过）
         """
         video_rel_path = inst_data["video"]
         annotations = inst_data.get("annotations", [])
 
-        # 提取所有标注的帧
+        # 提取标注的帧
         annotated_frames = sorted(
             set(ann["frame"] for ann in annotations if "frame" in ann)
         )
 
         if not annotated_frames:
-            logger.warning(f"视频 {video_rel_path} 没有标注帧")
+            logger.warning(f"视频 {video_rel_path} 没有标注帧，跳过")
             return None
 
-        # 收集关键帧图像
-        images_b64 = []
-        for frame in annotated_frames:
-            overlay_path = self._get_video_overlay_path(video_rel_path, frame)
-
-            if use_overlay and overlay_path.exists():
-                images_b64.append(self.image_to_base64(overlay_path))
-                logger.debug(f"视频帧 {frame}: 使用 overlay")
-            else:
-                logger.warning(f"视频帧 {frame}: overlay 不存在 {overlay_path}")
-                continue
-
-        if not images_b64:
-            logger.warning(f"视频 {video_rel_path} 没有可用的关键帧图片")
-            return None
-
-        # 提取timeline标注
-        timeline_annotations = [
-            ann for ann in annotations if ann.get("type") == "timeline"
-        ]
-
-        # 构建content
-        image_placeholders = "".join(["<image>"] * len(images_b64))
-
-        messages = [
-            {
-                "role": "user",
-                "content": f"{image_placeholders}{inst_data['instruction']}",
-            },
-            {"role": "assistant", "content": inst_data["raw_response"]},
-        ]
-
-        return {
-            "messages": messages,
-            "images": images_b64,  # 关键帧作为图像序列
-            "metadata": {
-                "source_file": str(video_rel_path),
-                "media_type": "video",
-                "frames": annotated_frames,
-                "timeline_annotations": timeline_annotations,
-                "llm_provider": inst_data.get("llm_provider"),
-                "model_name": inst_data.get("model_name"),
-                "timestamp": inst_data.get("timestamp"),
-            },
-        }
-
-    def _get_overlay_path(self, media_path: str, media_type: str) -> Path:
-        """获取overlay文件路径"""
-        # uploads/test_data/test_imgs/cover_0001.jpg
-        # -> overlays/test_data/test_imgs/cover_0001_overlay.png
-        parts = Path(media_path).parts
-        filename = Path(media_path).stem
-
-        # 重建路径（去掉第一级目录）
-        rel_dir = Path(*parts[:-1]) if len(parts) > 1 else Path(".")
-        overlay_path = self.overlays_dir / rel_dir / f"{filename}_overlay.png"
-        return overlay_path
-
-    def _get_pdf_overlay_path(self, pdf_path: str, page: int) -> Path:
-        """获取PDF页面的overlay路径"""
-        # uploads/test_data/test_pdf/PDU.pdf
-        # -> overlays/test_data/test_pdf/PDU/page_0000_overlay.png
-        parts = Path(pdf_path).parts
-        pdf_name = Path(pdf_path).stem
-
-        # 重建路径
-        rel_dir = Path(*parts[:-1]) if len(parts) > 1 else Path(".")
-        overlay_path = (
-            self.overlays_dir / rel_dir / pdf_name / f"page_{page:04d}_overlay.png"
-        )
-        return overlay_path
-
-    def _get_video_overlay_path(self, video_path: str, frame: int) -> Path:
-        """获取视频帧的overlay路径"""
-        # uploads/test_data/test_videos/TestVideo1.mp4
-        # -> overlays/test_data/test_videos/TestVideo1/000027_overlay.png
-        parts = Path(video_path).parts
-        video_name = Path(video_path).stem
-
-        # 重建路径
-        rel_dir = Path(*parts[:-1]) if len(parts) > 1 else Path(".")
-        overlay_path = (
-            self.overlays_dir / rel_dir / video_name / f"{frame:06d}_overlay.png"
-        )
-        return overlay_path
+        # 暂时跳过视频（文件太大）
+        # TODO: 未来可以提取关键帧或保存路径
+        logger.info(f"跳过视频 {video_rel_path}（暂不支持）")
+        return None
 
     def convert_all(
         self,
-        use_overlay: bool = True,
+        use_overlay: bool = False,  # 不再使用 overlay
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ) -> List[Dict]:
         """
-        转换所有instruction文件（支持 instructions/ 子目录结构）
+        转换所有 instruction 文件
 
-        扫描 instructions/image/, instructions/pdf/, instructions/video/ 下的所有 JSON 文件
+        扫描 instructions/ 下的所有 JSON 文件（递归）
 
         Args:
-            use_overlay: 是否优先使用带标注框的图片
+            use_overlay: 忽略（不再使用 overlay）
             progress_callback: 进度回调函数 (current, total, filename)
 
         Returns:
@@ -308,25 +242,38 @@ class DatasetConverter:
 
         logger.info(f"扫描 instructions/ 目录，找到 {total_files} 个 instruction 文件")
 
+        # 统计各类型数据数量
+        stats = {"image": 0, "pdf": 0, "video": 0, "skipped": 0}
+
         for idx, inst_file in enumerate(instruction_files, 1):
             try:
                 with open(inst_file, "r", encoding="utf-8") as f:
                     inst_data = json.load(f)
 
                 # 根据类型处理
+                result = None
                 if "image" in inst_data:
-                    result = self.process_image_instruction(inst_data, use_overlay)
+                    result = self.process_image_instruction(inst_data)
+                    if result:
+                        stats["image"] += 1
                 elif "pdf" in inst_data:
-                    result = self.process_pdf_instruction(inst_data, use_overlay)
+                    result = self.process_pdf_instruction(inst_data)
+                    if result:
+                        stats["pdf"] += 1
                 elif "video" in inst_data:
-                    result = self.process_video_instruction(inst_data, use_overlay)
+                    result = self.process_video_instruction(inst_data)
+                    if result:
+                        stats["video"] += 1
                 else:
                     logger.warning(f"未知类型: {inst_file}")
+                    stats["skipped"] += 1
                     continue
 
                 if result:
                     results.append(result)
                     logger.debug(f"[{idx}/{total_files}] 处理成功: {inst_file.name}")
+                else:
+                    stats["skipped"] += 1
 
                 # 调用进度回调
                 if progress_callback:
@@ -334,17 +281,24 @@ class DatasetConverter:
 
             except Exception as e:
                 logger.error(f"处理失败 {inst_file}: {e}")
+                stats["skipped"] += 1
                 continue
 
         logger.info(f"转换完成: {len(results)}/{total_files} 个样本")
+        logger.info(f"统计: 图片={stats['image']}, PDF={stats['pdf']}, 视频={stats['video']}, 跳过={stats['skipped']}")
+
         return results
 
     def save_to_parquet(
         self, results: List[Dict], output_path: str, compression: str = "snappy"
     ):
-        """保存为单个Parquet文件"""
+        """
+        保存为单个 Parquet 文件
+
+        注意: images 字段是字符串（JSON 格式），避免 Parquet 格式问题
+        """
         df = pd.DataFrame(results)
-        df.to_parquet(output_path, engine="pyarrow", compression=compression)
+        df.to_parquet(output_path, engine="pyarrow", compression=compression, index=False)
         logger.info(f"保存到: {output_path}")
 
     def save_to_parquet_sharded(
@@ -352,15 +306,15 @@ class DatasetConverter:
         results: List[Dict],
         output_dir: str,
         output_prefix: str = "train",
-        max_shard_size_mb: int = 100,
+        max_shard_size_mb: int = 500,
     ) -> List[str]:
         """
-        自动分片保存，参考 FineVision 数据集
+        自动分片保存
 
         Args:
             results: 转换后的数据
             output_dir: 输出目录
-            output_prefix: 文件前缀（train/validation/test）
+            output_prefix: 文件前缀
             max_shard_size_mb: 每个分片最大大小（MB）
 
         Returns:
@@ -373,15 +327,16 @@ class DatasetConverter:
         def estimate_size(sample: Dict) -> int:
             """估算样本大小（字节）"""
             size = 0
-            # 图片base64大小
+            # images 字段（JSON 字符串）
             if "images" in sample:
-                for img in sample["images"]:
-                    size += len(img)
-            # 文本大小
-            for msg in sample["messages"]:
-                size += len(json.dumps(msg, ensure_ascii=False))
-            # metadata大小
-            size += len(json.dumps(sample.get("metadata", {}), ensure_ascii=False))
+                size += len(sample["images"])
+            # messages 字段（JSON 字符串）
+            if "messages" in sample:
+                size += len(sample["messages"])
+            # 其他字段
+            for key in ["source_file", "media_type", "llm_provider", "model_name"]:
+                if key in sample:
+                    size += len(str(sample[key]))
             return size
 
         # 分片
@@ -417,7 +372,7 @@ class DatasetConverter:
             filepath = output_path / filename
 
             df = pd.DataFrame(shard)
-            df.to_parquet(filepath, engine="pyarrow", compression="snappy")
+            df.to_parquet(filepath, engine="pyarrow", compression="snappy", index=False)
 
             shard_size_mb = filepath.stat().st_size / (1024 * 1024)
             logger.info(
@@ -427,57 +382,17 @@ class DatasetConverter:
 
         return output_files
 
-    def save_to_jsonl(self, results: List[Dict], output_path: str):
-        """保存为JSONL格式（用于调试）"""
-        with open(output_path, "w", encoding="utf-8") as f:
-            for result in results:
-                f.write(json.dumps(result, ensure_ascii=False) + "\n")
-        logger.info(f"保存到: {output_path}")
-
-    def get_statistics(self, results: List[Dict]) -> Dict[str, Any]:
-        """获取数据集统计信息"""
-        stats = {
-            "total_samples": len(results),
-            "media_types": {"image": 0, "pdf": 0, "video": 0},
-            "total_images": 0,
-            "providers": {},
-            "models": {},
-        }
-
-        for result in results:
-            metadata = result.get("metadata", {})
-            media_type = metadata.get("media_type", "unknown")
-
-            # 统计媒体类型
-            if media_type in stats["media_types"]:
-                stats["media_types"][media_type] += 1
-
-            # 统计图片数量
-            stats["total_images"] += len(result.get("images", []))
-
-            # 统计 LLM 提供商
-            provider = metadata.get("llm_provider", "unknown")
-            stats["providers"][provider] = stats["providers"].get(provider, 0) + 1
-
-            # 统计模型
-            model = metadata.get("model_name", "unknown")
-            stats["models"][model] = stats["models"].get(model, 0) + 1
-
-        return stats
-
     def generate_dataset_infos(
         self,
         output_files: List[str],
         num_samples: int,
-        data_dir: Path,
     ) -> Dict[str, Any]:
         """
-        生成 dataset_infos.json 文件（HuggingFace datasets 标准）
+        生成 dataset_infos.json 文件（保存在项目根目录，与 data 平行）
 
         Args:
             output_files: 生成的 Parquet 文件列表
             num_samples: 样本总数
-            data_dir: data/ 目录路径
 
         Returns:
             dataset_infos 字典
@@ -485,7 +400,7 @@ class DatasetConverter:
         # 计算总大小
         total_bytes = 0
         for filename in output_files:
-            filepath = data_dir / filename
+            filepath = self.data_dir / filename
             if filepath.exists():
                 total_bytes += filepath.stat().st_size
 
@@ -496,21 +411,12 @@ class DatasetConverter:
                 "homepage": "",
                 "license": "",
                 "features": {
-                    "messages": {
-                        "feature": {
-                            "role": {"dtype": "string"},
-                            "content": {"dtype": "string"},
-                        }
-                    },
-                    "images": {
-                        "feature": {"dtype": "string"}
-                    },
-                    "metadata": {
-                        "source_file": {"dtype": "string"},
-                        "media_type": {"dtype": "string"},
-                        "llm_provider": {"dtype": "string"},
-                        "model_name": {"dtype": "string"},
-                    },
+                    "messages": {"dtype": "string"},  # JSON 字符串
+                    "images": {"dtype": "string"},  # JSON 字符串（base64 列表）
+                    "source_file": {"dtype": "string"},
+                    "media_type": {"dtype": "string"},
+                    "llm_provider": {"dtype": "string"},
+                    "model_name": {"dtype": "string"},
                 },
                 "splits": {
                     "train": {
@@ -525,23 +431,59 @@ class DatasetConverter:
             }
         }
 
-        # 保存 dataset_infos.json
-        infos_path = data_dir / "dataset_infos.json"
+        # 保存到项目根目录（与 data 平行）
+        infos_path = self.project_root / "dataset_infos.json"
         with open(infos_path, "w", encoding="utf-8") as f:
             json.dump(dataset_infos, f, indent=2, ensure_ascii=False)
 
         logger.info(f"✓ 生成 dataset_infos.json: {infos_path}")
         return dataset_infos
 
+    def get_statistics(self, results: List[Dict]) -> Dict[str, Any]:
+        """获取数据集统计信息"""
+        stats = {
+            "total_samples": len(results),
+            "media_types": {"image": 0, "pdf": 0, "video": 0},
+            "total_images": 0,
+            "providers": {},
+            "models": {},
+        }
+
+        for result in results:
+            media_type = result.get("media_type", "unknown")
+
+            # 统计媒体类型
+            if media_type in stats["media_types"]:
+                stats["media_types"][media_type] += 1
+
+            # 统计图片数量（解析 JSON 字符串）
+            images_json = result.get("images", "[]")
+            try:
+                images_list = json.loads(images_json)
+                stats["total_images"] += len(images_list)
+            except:
+                pass
+
+            # 统计 LLM 提供商
+            provider = result.get("llm_provider", "unknown")
+            if provider:
+                stats["providers"][provider] = stats["providers"].get(provider, 0) + 1
+
+            # 统计模型
+            model = result.get("model_name", "unknown")
+            if model:
+                stats["models"][model] = stats["models"].get(model, 0) + 1
+
+        return stats
+
 
 def validate_annotation_project(project_name: str) -> Dict[str, Any]:
     """
-    验证标注项目结构（新版本：支持 instructions/ 目录）
+    验证标注项目结构
 
     项目结构要求:
-    - instructions/ (必需) - 包含 image/, pdf/, video/ 子目录
+    - instructions/ (必需) - 包含 instruction JSON 文件
     - uploads/ (必需) - 原始媒体文件
-    - overlays/ (可选) - 标注可视化图片
 
     Args:
         project_name: 项目文件夹名称
@@ -570,9 +512,8 @@ def validate_annotation_project(project_name: str) -> Dict[str, Any]:
             "error": f"{project_name} 不是文件夹",
         }
 
-    instructions_dir = project_root / "instructions"  # 改为复数
+    instructions_dir = project_root / "instructions"
     uploads_dir = project_root / "uploads"
-    overlays_dir = project_root / "overlays"
 
     missing_dirs = []
     if not instructions_dir.exists():
@@ -586,18 +527,33 @@ def validate_annotation_project(project_name: str) -> Dict[str, Any]:
             "error": f"缺少必需的目录: {', '.join(missing_dirs)}",
         }
 
-    # 统计 instruction 文件数量（递归扫描所有子目录）
+    # 统计 instruction 文件数量（递归扫描）
     instruction_files = list(instructions_dir.rglob("*.json"))
-    has_overlays = overlays_dir.exists()
+
+    # 统计各类型数量
+    type_counts = {"image": 0, "pdf": 0, "video": 0, "unknown": 0}
+    for inst_file in instruction_files:
+        try:
+            with open(inst_file, "r") as f:
+                data = json.load(f)
+                if "image" in data:
+                    type_counts["image"] += 1
+                elif "pdf" in data:
+                    type_counts["pdf"] += 1
+                elif "video" in data:
+                    type_counts["video"] += 1
+                else:
+                    type_counts["unknown"] += 1
+        except:
+            pass
 
     return {
         "valid": True,
         "project_name": project_name,
         "instruction_count": len(instruction_files),
-        "has_overlays": has_overlays,
+        "type_counts": type_counts,
         "structure": {
             "instructions": True,
             "uploads": True,
-            "overlays": has_overlays,
         },
     }
