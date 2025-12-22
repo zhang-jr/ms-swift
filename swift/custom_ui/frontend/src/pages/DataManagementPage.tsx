@@ -39,7 +39,6 @@ const DataManagementPage = () => {
   // 数据转换相关状态
   const [convertModalVisible, setConvertModalVisible] = useState(false)
   const [convertLoading, setConvertLoading] = useState(false)
-  const [selectedProject, setSelectedProject] = useState<string>('')
   const [convertConfig, setConvertConfig] = useState<ConvertRequest>({
     project_name: '',
     output_format: 'parquet',
@@ -135,7 +134,6 @@ const DataManagementPage = () => {
 
   // 打开转换模态框
   const handleOpenConvert = (projectName: string) => {
-    setSelectedProject(projectName)
     setConvertConfig({
       project_name: projectName,
       output_format: 'parquet',
@@ -434,10 +432,7 @@ const DataManagementPage = () => {
         }
         open={convertModalVisible}
         onOk={handleConvert}
-        onCancel={() => {
-          setConvertModalVisible(false)
-          setSelectedProject('')
-        }}
+        onCancel={() => setConvertModalVisible(false)}
         okText="开始转换"
         cancelText="取消"
         confirmLoading={convertLoading}
