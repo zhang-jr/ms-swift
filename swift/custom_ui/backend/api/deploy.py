@@ -16,12 +16,19 @@ from services.deploy_service import deploy_service
 
 # 请求/响应模型
 class DeployRequest(BaseModel):
-    """部署请求"""
-    model_path: str  # 模型路径（本地或 HuggingFace 模型名）
-    served_model_name: Optional[str] = None  # 服务模型名称（用于 API 调用）
+    """部署请求（兼容前端参数）"""
+    # 前端参数
+    model_id_or_path: str  # 模型 ID 或路径
+    adapter_path: Optional[str] = None  # Adapter 路径（可选）
+    host: Optional[str] = "0.0.0.0"  # 服务 Host
     port: Optional[int] = None  # 服务端口（None 表示自动分配）
-    gpu_devices: str = "0"  # GPU 设备 ID（如 "0" 或 "0,1"）
-    max_model_len: Optional[int] = None  # 最大模型长度
+    max_length: Optional[int] = None  # 最大长度
+    temperature: Optional[float] = 0.7  # 温度参数
+    top_p: Optional[float] = None  # Top-p 参数
+    use_vllm: Optional[bool] = True  # 是否使用 vLLM（默认 True）
+    gpu_memory_utilization: Optional[float] = 0.9  # GPU 内存利用率
+    max_num_batched_tokens: Optional[int] = None  # 最大批处理 token 数
+    quantization_bit: Optional[int] = None  # 量化位数
 
 
 class DeployResponse(BaseModel):
@@ -57,13 +64,15 @@ async def start_deployment(request: DeployRequest, background_tasks: BackgroundT
     示例:
         POST /api/deploy/start
         {
-            "model_path": "Qwen/Qwen2.5-7B-Instruct",
-            "served_model_name": "Qwen2.5-7B-Instruct",
-            "gpu_devices": "0"
+            "model_id_or_path": "Qwen/Qwen2.5-7B-Instruct",
+            "adapter_path": "/app/output/train-12345678",
+            "port": 8080,
+            "use_vllm": true,
+            "gpu_memory_utilization": 0.9
         }
 
     部署成功后，可通过以下方式调用:
-        curl http://localhost:8000/v1/chat/completions \\
+        curl http://localhost:8080/v1/chat/completions \\
         -H "Content-Type: application/json" \\
         -d '{
             "model": "Qwen2.5-7B-Instruct",
@@ -81,17 +90,26 @@ async def start_deployment(request: DeployRequest, background_tasks: BackgroundT
     # 生成部署 ID
     deployment_id = f"deploy-{uuid.uuid4().hex[:8]}"
 
-    logger.info(f"收到部署请求: {deployment_id}, 模型: {request.model_path}")
+    logger.info(f"收到部署请求: {deployment_id}, 模型: {request.model_id_or_path}")
+
+    # 参数转换：前端 -> 后端
+    # served_model_name: 从模型路径提取（如 Qwen/Qwen2.5-7B-Instruct -> Qwen2.5-7B-Instruct）
+    served_model_name = request.model_id_or_path.split('/')[-1]
 
     try:
         # 启动部署（异步，等待服务启动）
         deployment_info = await deploy_service.start_deployment(
             deployment_id=deployment_id,
-            model_path=request.model_path,
-            served_model_name=request.served_model_name,
+            model_path=request.model_id_or_path,
+            adapter_path=request.adapter_path,
+            served_model_name=served_model_name,
+            host=request.host or "0.0.0.0",
             port=request.port,
-            gpu_devices=request.gpu_devices,
-            max_model_len=request.max_model_len,
+            gpu_devices="0",  # 默认使用第一个 GPU
+            max_model_len=request.max_length,
+            use_vllm=request.use_vllm if request.use_vllm is not None else True,
+            gpu_memory_utilization=request.gpu_memory_utilization,
+            quantization_bit=request.quantization_bit,
         )
 
         return DeployResponse(

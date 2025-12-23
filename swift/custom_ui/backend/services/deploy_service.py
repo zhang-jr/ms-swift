@@ -40,10 +40,15 @@ class DeployService:
         self,
         deployment_id: str,
         model_path: str,
+        adapter_path: Optional[str] = None,
         served_model_name: Optional[str] = None,
+        host: str = "0.0.0.0",
         port: Optional[int] = None,
         gpu_devices: str = "0",
         max_model_len: Optional[int] = None,
+        use_vllm: bool = True,
+        gpu_memory_utilization: Optional[float] = 0.9,
+        quantization_bit: Optional[int] = None,
         **kwargs
     ) -> Dict[str, Any]:
         """
@@ -52,10 +57,15 @@ class DeployService:
         Args:
             deployment_id: 部署 ID
             model_path: 模型路径（本地路径或 HuggingFace 模型名称）
+            adapter_path: Adapter 路径（可选，如 LoRA adapter）
             served_model_name: 服务模型名称（用于 OpenAI API）
+            host: 服务 Host（默认 0.0.0.0）
             port: 服务端口（默认自动分配）
             gpu_devices: GPU 设备 ID（如 "0" 或 "0,1"）
             max_model_len: 最大模型长度（可选）
+            use_vllm: 是否使用 vLLM 后端（默认 True）
+            gpu_memory_utilization: GPU 内存利用率（默认 0.9）
+            quantization_bit: 量化位数（可选）
             **kwargs: 其他参数
 
         Returns:
@@ -76,14 +86,25 @@ class DeployService:
         cmd = [
             "swift", "deploy",
             "--model", model_path,
-            "--infer_backend", "vllm",
+            "--infer_backend", "vllm" if use_vllm else "pt",
             "--served_model_name", served_model_name,
+            "--host", host,
             "--port", str(port),
         ]
+
+        # Adapter 路径
+        if adapter_path:
+            cmd.extend(["--adapters", adapter_path])
 
         # 可选参数
         if max_model_len:
             cmd.extend(["--max_model_len", str(max_model_len)])
+
+        if gpu_memory_utilization is not None and use_vllm:
+            cmd.extend(["--gpu_memory_utilization", str(gpu_memory_utilization)])
+
+        if quantization_bit:
+            cmd.extend(["--quantization_bit", str(quantization_bit)])
 
         # 日志文件
         log_file = DEPLOY_DIR / f"{deployment_id}.log"

@@ -15,6 +15,7 @@ import {
   Modal,
   Row,
   Col,
+  Checkbox,
 } from 'antd'
 import {
   RocketOutlined,
@@ -207,7 +208,7 @@ const DeployPage = () => {
                 max_length: 2048,
                 temperature: 0.7,
                 top_p: 0.9,
-                use_vllm: false,
+                use_vllm: true,  // 默认启用 vLLM
                 gpu_memory_utilization: 0.9,
               }}
             >
@@ -264,11 +265,8 @@ const DeployPage = () => {
                 </Col>
               </Row>
 
-              <Form.Item label="使用 vLLM" name="use_vllm" valuePropName="checked">
-                <Select>
-                  <Select.Option value={false}>否</Select.Option>
-                  <Select.Option value={true}>是</Select.Option>
-                </Select>
+              <Form.Item name="use_vllm" valuePropName="checked">
+                <Checkbox>使用 vLLM (推荐)</Checkbox>
               </Form.Item>
 
               <Form.Item label="GPU 内存利用率" name="gpu_memory_utilization">
@@ -316,7 +314,13 @@ const DeployPage = () => {
             <Paragraph>
               <Text strong>OpenAI 兼容接口:</Text>
             </Paragraph>
-            <pre style={{ background: '#f5f5f5', padding: '12px', borderRadius: '4px' }}>
+            <pre style={{
+              background: '#1f1f1f',
+              color: '#d4d4d4',  // 可见的灰色文字
+              padding: '12px',
+              borderRadius: '4px',
+              overflow: 'auto'
+            }}>
 {`import openai
 client = openai.OpenAI(
     api_key="EMPTY",
