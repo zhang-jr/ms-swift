@@ -18,19 +18,26 @@
 
 数据保存:
 - 使用 Dataset.from_list() 创建 Dataset
-- 使用 dataset.to_parquet() 保存（自动处理复杂类型）
-- 不需要手动序列化/反序列化
-- load_dataset() 可以直接加载，保持原生数据结构
+- messages 字段序列化为 JSON 字符串（避免 Parquet 列式存储破坏 chat template 格式）
+- 使用 dataset.to_parquet() 保存
+- MS-SWIFT 训练时需用 json.loads() 解析 messages 字段
 
-示例数据结构:
+示例数据结构（Parquet 中存储格式）:
 {
-    "messages": [{"role": "user", "content": "..."}, ...],  # list of dict
+    "messages": "[{\"role\": \"user\", \"content\": \"...\"}, ...]",  # JSON 字符串
     "images": ["base64...", ...],  # list of base64 strings (可为空)
     "videos": ["/path/to/video.mp4", ...],  # list of paths (可为空)
     "source_file": "...",
     "media_type": "image" | "pdf" | "video",
     "llm_provider": "...",
     "model_name": "..."
+}
+
+训练时需要的格式（反序列化后）:
+{
+    "messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
+    "images": [...],
+    "videos": [...]
 }
 """
 
@@ -323,7 +330,9 @@ class DatasetConverter:
         """
         保存为单个 Parquet 文件（使用 HuggingFace datasets）
 
-        使用显式 Features 定义避免 schema 推断问题
+        重要：将 messages 序列化为 JSON 字符串，避免列式存储导致格式错误
+        MS-SWIFT 训练时需要保持原始的 chat template 格式：
+        [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
         """
         try:
             from datasets import Dataset, Features, Value, Sequence
@@ -331,12 +340,17 @@ class DatasetConverter:
             logger.error("datasets 库未安装，请安装: pip install datasets")
             raise
 
-        # 显式定义 Features（避免 schema 推断问题）
+        # 序列化 messages 字段为 JSON 字符串
+        serialized_results = []
+        for sample in results:
+            sample_copy = sample.copy()
+            # 将 messages 从 list of dict 转换为 JSON 字符串
+            sample_copy["messages"] = json.dumps(sample["messages"], ensure_ascii=False)
+            serialized_results.append(sample_copy)
+
+        # 显式定义 Features（messages 现在是字符串）
         features = Features({
-            "messages": Sequence({
-                "role": Value("string"),
-                "content": Value("string")
-            }),
+            "messages": Value("string"),  # JSON 字符串（保持 chat template 格式）
             "images": Sequence(Value("string")),  # list of base64 strings
             "videos": Sequence(Value("string")),  # list of paths
             "source_file": Value("string"),
@@ -345,8 +359,8 @@ class DatasetConverter:
             "model_name": Value("string"),
         })
 
-        # 从 list of dict 创建 Dataset（使用显式 Features）
-        dataset = Dataset.from_list(results, features=features)
+        # 从序列化后的数据创建 Dataset
+        dataset = Dataset.from_list(serialized_results, features=features)
 
         # 保存为 Parquet
         dataset.to_parquet(output_path)
@@ -373,7 +387,8 @@ class DatasetConverter:
         """
         自动分片保存（使用 HuggingFace datasets）
 
-        使用显式 Features 定义避免 schema 推断问题
+        重要：将 messages 序列化为 JSON 字符串，避免列式存储导致格式错误
+        MS-SWIFT 训练时需要保持原始的 chat template 格式
 
         Args:
             results: 转换后的数据（统一 schema）
@@ -393,12 +408,17 @@ class DatasetConverter:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # 显式定义 Features（避免 schema 推断问题）
+        # 序列化 messages 字段为 JSON 字符串
+        serialized_results = []
+        for sample in results:
+            sample_copy = sample.copy()
+            # 将 messages 从 list of dict 转换为 JSON 字符串
+            sample_copy["messages"] = json.dumps(sample["messages"], ensure_ascii=False)
+            serialized_results.append(sample_copy)
+
+        # 显式定义 Features（messages 现在是字符串）
         features = Features({
-            "messages": Sequence({
-                "role": Value("string"),
-                "content": Value("string")
-            }),
+            "messages": Value("string"),  # JSON 字符串（保持 chat template 格式）
             "images": Sequence(Value("string")),  # list of base64 strings
             "videos": Sequence(Value("string")),  # list of paths
             "source_file": Value("string"),
@@ -407,8 +427,8 @@ class DatasetConverter:
             "model_name": Value("string"),
         })
 
-        # 创建 Dataset（使用显式 Features）
-        dataset = Dataset.from_list(results, features=features)
+        # 创建 Dataset（使用序列化后的数据）
+        dataset = Dataset.from_list(serialized_results, features=features)
 
         # 预估每个样本的大小（用于分片）
         def estimate_size(sample: Dict) -> int:
@@ -422,22 +442,22 @@ class DatasetConverter:
             if "videos" in sample:
                 for vid in sample["videos"]:
                     size += len(vid) if isinstance(vid, str) else 0
-            # messages 字段（估算 JSON 大小）
+            # messages 字段（现在是 JSON 字符串）
             if "messages" in sample:
-                size += len(json.dumps(sample["messages"]))
+                size += len(sample["messages"]) if isinstance(sample["messages"], str) else 0
             # 其他字段
             for key in ["source_file", "media_type", "llm_provider", "model_name"]:
                 if key in sample:
                     size += len(str(sample[key]))
             return size
 
-        # 分片
+        # 分片（使用序列化后的数据）
         shards = []
         current_shard_indices = []
         current_size = 0
         max_size_bytes = max_shard_size_mb * 1024 * 1024
 
-        for idx, sample in enumerate(results):
+        for idx, sample in enumerate(serialized_results):
             sample_size = estimate_size(sample)
 
             # 检查是否需要创建新分片
@@ -506,9 +526,9 @@ class DatasetConverter:
                 "homepage": "",
                 "license": "",
                 "features": {
-                    "messages": {"dtype": "string"},  # JSON 字符串（list of dict）
-                    "images": {"dtype": "string"},  # JSON 字符串（base64 列表）
-                    "videos": {"dtype": "string"},  # JSON 字符串（路径列表）
+                    "messages": {"dtype": "string"},  # JSON 字符串（chat template 格式）
+                    "images": {"dtype": "list"},  # list of base64 strings
+                    "videos": {"dtype": "list"},  # list of paths
                     "source_file": {"dtype": "string"},
                     "media_type": {"dtype": "string"},
                     "llm_provider": {"dtype": "string"},
