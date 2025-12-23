@@ -16,6 +16,8 @@ import {
   Row,
   Col,
   Checkbox,
+  AutoComplete,
+  Tooltip,
 } from 'antd'
 import {
   RocketOutlined,
@@ -216,18 +218,42 @@ const DeployPage = () => {
                 label="模型"
                 name="model_id_or_path"
                 rules={[{ required: true, message: '请选择或输入模型路径' }]}
+                tooltip="选择本地模型或输入完整路径（如 /app/models/Qwen/Qwen2.5-7B-Instruct）"
               >
-                <Select
-                  showSearch
-                  placeholder="选择模型或输入路径"
-                  optionFilterProp="children"
+                <AutoComplete
+                  placeholder="选择模型或输入本地路径"
                   filterOption={(input, option) =>
                     (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
                   }
-                  options={models.map((m) => ({
-                    label: m.model_name,
-                    value: m.model_id,
-                  }))}
+                  options={models.map((m) => {
+                    // 为不同类型的模型添加图标和颜色
+                    const typeTag = m.model_type === 'adapter'
+                      ? <Tag color="blue">Adapter</Tag>
+                      : <Tag color="green">Base</Tag>
+
+                    const sourceTag = m.source === 'output'
+                      ? <Tag color="orange">训练输出</Tag>
+                      : <Tag color="cyan">本地</Tag>
+
+                    return {
+                      label: (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <div>{m.model_name}</div>
+                            <div style={{ fontSize: '12px', color: '#888' }}>
+                              {m.model_id}
+                            </div>
+                          </div>
+                          <Space>
+                            {typeTag}
+                            {sourceTag}
+                            <Tag>{m.size}</Tag>
+                          </Space>
+                        </div>
+                      ),
+                      value: m.model_id,
+                    }
+                  })}
                 />
               </Form.Item>
 
