@@ -127,13 +127,18 @@ async def start_deployment(request: DeployRequest, background_tasks: BackgroundT
         )
 
     except ValueError as e:
+        logger.error(f"部署参数错误 (ValueError): {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=str(e))
     except TimeoutError as e:
+        logger.error(f"部署超时 (TimeoutError): {e}", exc_info=True)
         raise HTTPException(status_code=504, detail=str(e))
     except RuntimeError as e:
+        logger.error(f"部署运行时错误 (RuntimeError): {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        logger.error(f"部署失败: {e}", exc_info=True)
+        import traceback
+        logger.error(f"部署失败 (未知异常): {e}")
+        logger.error(f"详细堆栈:\n{traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"部署失败: {str(e)}")
 
 

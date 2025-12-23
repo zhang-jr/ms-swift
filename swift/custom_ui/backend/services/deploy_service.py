@@ -71,34 +71,48 @@ class DeployService:
         Returns:
             dict: 部署信息
         """
+        # 参数验证
+        logger.info(f"开始部署验证 - deployment_id: {deployment_id}")
+        logger.info(f"参数检查 - model_path: {model_path}, adapter_path: {adapter_path}")
+        logger.info(f"参数检查 - use_vllm: {use_vllm}, port: {port}, max_model_len: {max_model_len}")
+
         if deployment_id in self.running_deployments:
             raise ValueError(f"部署 {deployment_id} 已存在")
+
+        if not model_path or not model_path.strip():
+            raise ValueError("model_path 不能为空")
 
         # 分配端口
         if port is None:
             port = self._get_next_port()
+            logger.info(f"自动分配端口: {port}")
+        else:
+            logger.info(f"使用指定端口: {port}")
 
         # 确定服务模型名称
         if served_model_name is None:
             served_model_name = Path(model_path).name
+            logger.info(f"自动生成 served_model_name: {served_model_name}")
 
-        # 构建 swift deploy 命令（参考官方文档）
+        # 构建 swift deploy 命令（参考官方文档和源代码）
+        # 参考：DeployArguments 类接受的参数
         # 官方示例：swift deploy --model MODEL --infer_backend vllm --max_new_tokens 2048 --served_model_name NAME
         cmd = [
             "swift", "deploy",
             "--model", model_path,
             "--infer_backend", "vllm" if use_vllm else "pt",
             "--served_model_name", served_model_name,
-            "--port", str(port),
         ]
 
-        # 添加 max_new_tokens（官方文档中的参数）
-        if max_model_len:
-            cmd.extend(["--max_new_tokens", str(max_model_len)])
-        else:
-            cmd.extend(["--max_new_tokens", "2048"])  # 默认值
+        # 端口（swift deploy 会自动调用 find_free_port，所以只在指定时添加）
+        if port is not None:
+            cmd.extend(["--port", str(port)])
 
-        # Adapter 路径（确保不是空字符串）
+        # 添加 max_new_tokens（必需参数，否则使用默认值）
+        if max_model_len is not None and max_model_len > 0:
+            cmd.extend(["--max_new_tokens", str(max_model_len)])
+
+        # Adapter 路径（确保不是 None 或空字符串）
         if adapter_path and adapter_path.strip():
             cmd.extend(["--adapters", adapter_path])
 
