@@ -641,7 +641,6 @@ class ConvertRequest(BaseModel):
     project_name: str  # 标注项目文件夹名称
     output_format: str = "parquet"  # 输出格式: parquet 或 jsonl
     shard_size_mb: int = 100  # Parquet 分片大小（MB）
-    include_overlays: bool = True  # 是否使用带标注框的 overlay 图片
     output_name: Optional[str] = None  # 输出文件夹名称（默认为 {project_name}_converted）
 
 
@@ -705,8 +704,8 @@ async def convert_annotation_dataset(request: ConvertRequest):
         # 初始化转换器
         converter = DatasetConverter(request.project_name)
 
-        # 转换所有数据（统一 schema）
-        results = converter.convert_all(use_overlay=request.include_overlays)
+        # 转换所有数据（从 uploads 文件夹读取原始数据）
+        results = converter.convert_all()
 
         if not results:
             raise HTTPException(status_code=400, detail="没有成功转换的数据")

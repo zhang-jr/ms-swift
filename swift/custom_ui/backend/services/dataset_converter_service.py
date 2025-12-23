@@ -279,21 +279,20 @@ class DatasetConverter:
 
     def convert_all(
         self,
-        use_overlay: bool = False,  # 不再使用 overlay
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
     ) -> List[Dict]:
         """
         转换所有 instruction 文件
 
         扫描 instructions/ 下的所有 JSON 文件（递归）
-        所有样本使用统一 schema（images 和 videos 字段都存在，没有就是空列表）
+        直接从 uploads/ 文件夹读取原始媒体数据（图片、PDF、视频）
+        所有样本使用统一 schema（query, response, system, history, images, videos）
 
         Args:
-            use_overlay: 忽略（不再使用 overlay）
             progress_callback: 进度回调函数 (current, total, filename)
 
         Returns:
-            转换后的数据列表（统一 schema）
+            转换后的数据列表（MS-SWIFT query-response 格式）
         """
         results = []
 

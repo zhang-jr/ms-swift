@@ -158,7 +158,6 @@ export interface ConvertRequest {
   project_name: string
   output_format?: 'parquet' | 'jsonl'
   shard_size_mb?: number
-  include_overlays?: boolean
   output_name?: string
 }
 
@@ -183,11 +182,15 @@ export interface ValidationResponse {
   valid: boolean
   project_name?: string
   instruction_count?: number
-  has_overlays?: boolean
+  type_counts?: {
+    image: number
+    pdf: number
+    video: number
+    unknown: number
+  }
   structure?: {
-    instruction: boolean
+    instructions: boolean
     uploads: boolean
-    overlays: boolean
   }
   error?: string
 }

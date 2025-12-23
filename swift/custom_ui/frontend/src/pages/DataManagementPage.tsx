@@ -44,7 +44,6 @@ const DataManagementPage = () => {
     project_name: '',
     output_format: 'parquet',
     shard_size_mb: 500,  // 默认 500MB
-    include_overlays: true,
     output_name: '',
   })
   const [convertResultVisible, setConvertResultVisible] = useState(false)
@@ -139,7 +138,6 @@ const DataManagementPage = () => {
       project_name: projectName,
       output_format: 'parquet',
       shard_size_mb: 500,  // 默认 500MB
-      include_overlays: true,
       output_name: '',  // 输出到项目内 data/ 目录，不需要用户自定义名称
     })
     setConvertModalVisible(true)
@@ -492,28 +490,15 @@ const DataManagementPage = () => {
             </div>
           )}
 
-          <div>
-            <div style={{ marginBottom: 8, fontWeight: 500 }}>使用 Overlay 图片:</div>
-            <Space>
-              <Button
-                type={convertConfig.include_overlays ? 'primary' : 'default'}
-                onClick={() =>
-                  setConvertConfig({ ...convertConfig, include_overlays: true })
-                }
-              >
-                是（带标注框）
-              </Button>
-              <Button
-                type={!convertConfig.include_overlays ? 'primary' : 'default'}
-                onClick={() =>
-                  setConvertConfig({ ...convertConfig, include_overlays: false })
-                }
-              >
-                否（原始图片）
-              </Button>
-            </Space>
-            <div style={{ marginTop: 4, fontSize: 12, color: 'rgba(255, 255, 255, 0.45)' }}>
-              Overlay 图片包含可视化的标注框
+          <div style={{ padding: 12, background: 'rgba(102, 126, 234, 0.1)', borderRadius: 4 }}>
+            <div style={{ fontSize: 12, color: 'rgba(255, 255, 255, 0.65)' }}>
+              💡 数据源说明：
+              <br />
+              - 自动从 <strong>uploads</strong> 文件夹读取原始媒体数据
+              <br />
+              - <strong>instructions</strong> 文件夹提供标注信息（query 和 response）
+              <br />
+              - 转换为 MS-SWIFT 原生支持的 query-response 格式
             </div>
           </div>
         </Space>
