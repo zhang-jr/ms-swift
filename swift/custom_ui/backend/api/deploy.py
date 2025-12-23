@@ -91,6 +91,8 @@ async def start_deployment(request: DeployRequest, background_tasks: BackgroundT
     deployment_id = f"deploy-{uuid.uuid4().hex[:8]}"
 
     logger.info(f"收到部署请求: {deployment_id}, 模型: {request.model_id_or_path}")
+    logger.info(f"请求参数: adapter_path={request.adapter_path}, port={request.port}, "
+                f"use_vllm={request.use_vllm}, max_length={request.max_length}")
 
     # 参数转换：前端 -> 后端
     # served_model_name: 从模型路径提取（如 Qwen/Qwen2.5-7B-Instruct -> Qwen2.5-7B-Instruct）
@@ -111,6 +113,7 @@ async def start_deployment(request: DeployRequest, background_tasks: BackgroundT
             gpu_memory_utilization=request.gpu_memory_utilization,
             quantization_bit=request.quantization_bit,
         )
+        logger.info(f"部署成功: {deployment_id}")
 
         return DeployResponse(
             deployment_id=deployment_info["deployment_id"],

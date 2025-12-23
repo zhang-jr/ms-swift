@@ -82,7 +82,8 @@ class DeployService:
         if served_model_name is None:
             served_model_name = Path(model_path).name
 
-        # 构建 swift deploy 命令
+        # 构建 swift deploy 命令（参考官方文档）
+        # 官方示例：swift deploy --model MODEL --infer_backend vllm --max_new_tokens 2048 --served_model_name NAME
         cmd = [
             "swift", "deploy",
             "--model", model_path,
@@ -91,42 +92,53 @@ class DeployService:
             "--port", str(port),
         ]
 
+        # 添加 max_new_tokens（官方文档中的参数）
+        if max_model_len:
+            cmd.extend(["--max_new_tokens", str(max_model_len)])
+        else:
+            cmd.extend(["--max_new_tokens", "2048"])  # 默认值
+
         # Adapter 路径（确保不是空字符串）
         if adapter_path and adapter_path.strip():
             cmd.extend(["--adapters", adapter_path])
 
-        # 可选参数
-        if max_model_len:
-            cmd.extend(["--max_model_len", str(max_model_len)])
+        # vLLM 特定参数（谨慎添加，可能不被所有版本支持）
+        # if gpu_memory_utilization is not None and use_vllm:
+        #     cmd.extend(["--gpu_memory_utilization", str(gpu_memory_utilization)])
 
-        if gpu_memory_utilization is not None and use_vllm:
-            cmd.extend(["--gpu_memory_utilization", str(gpu_memory_utilization)])
-
-        if quantization_bit:
-            cmd.extend(["--quantization_bit", str(quantization_bit)])
+        # if quantization_bit:
+        #     cmd.extend(["--quantization_bit", str(quantization_bit)])
 
         # 日志文件
         log_file = DEPLOY_DIR / f"{deployment_id}.log"
 
         logger.info(f"启动部署: {deployment_id}")
-        logger.info(f"命令: {' '.join(cmd)}")
+        logger.info(f"完整命令: {' '.join(cmd)}")
         logger.info(f"端口: {port}")
         logger.info(f"GPU: {gpu_devices}")
+        logger.info(f"日志文件: {log_file}")
 
         # 启动进程
-        env = {
-            **subprocess.os.environ,
-            "CUDA_VISIBLE_DEVICES": gpu_devices,
-        }
+        try:
+            env = {
+                **subprocess.os.environ,
+                "CUDA_VISIBLE_DEVICES": gpu_devices,
+            }
 
-        with open(log_file, "w") as f:
-            process = subprocess.Popen(
-                cmd,
-                stdout=f,
-                stderr=subprocess.STDOUT,
-                env=env,
-                preexec_fn=subprocess.os.setsid if hasattr(subprocess.os, 'setsid') else None
-            )
+            with open(log_file, "w") as f:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=f,
+                    stderr=subprocess.STDOUT,
+                    env=env,
+                    preexec_fn=subprocess.os.setsid if hasattr(subprocess.os, 'setsid') else None
+                )
+
+            logger.info(f"进程已启动，PID: {process.pid}")
+
+        except Exception as e:
+            logger.error(f"启动进程失败: {e}", exc_info=True)
+            raise RuntimeError(f"无法启动部署进程: {str(e)}")
 
         # 等待服务启动（检查健康状态）
         max_retries = 30  # 最多等待 30 秒
