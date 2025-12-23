@@ -1,44 +1,43 @@
 """
 数据集转换服务（使用 HuggingFace datasets）
-将标注数据转换为 HuggingFace Datasets 格式（Parquet）
+将标注数据转换为 MS-SWIFT 原生支持的格式（Parquet）
 基于标注平台的转换逻辑，适配训练平台的目录结构
 
 核心原则:
 1. overlays 只是可视化标注结果，训练数据使用 uploads 中的原始数据
 2. annotations 字段仅用于辅助，训练数据不依赖它
-3. 图片直接转 base64
-4. PDF 提取所有页面为图片（base64），让模型学会识别 raw_response 中的问题页
-5. Video 不转 base64（太大），使用绝对路径，让模型学会识别 raw_response 中的问题帧
+3. 图片转 Data URL 格式: data:image/jpg;base64,{base64}
+4. PDF 提取所有页面为图片（Data URL），让模型学会识别 raw_response 中的问题页
+5. Video 使用路径（太大不转 base64），或转 Data URL: data:video/mp4;base64,{base64}
 6. dataset_infos.json 保存在项目根目录（与 data 平行）
 
+数据格式（MS-SWIFT 官方格式）:
+- 使用 query-response 格式（单轮 QA）
+- instruction → query
+- raw_response → response
+- 避免复杂的 messages 嵌套结构
+
 统一 Schema:
-- 所有样本都有 messages、images、videos 字段
-- 没有的字段设为空列表 []
+- 所有样本都有 query、response、system、history、images、videos 字段
+- 没有的字段设为空字符串或空列表
 - 避免 Parquet 列不统一问题
 
-数据保存:
-- 使用 Dataset.from_list() 创建 Dataset
-- messages 字段序列化为 JSON 字符串（避免 Parquet 列式存储破坏 chat template 格式）
-- 使用 dataset.to_parquet() 保存
-- MS-SWIFT 训练时需用 json.loads() 解析 messages 字段
-
-示例数据结构（Parquet 中存储格式）:
+示例数据结构（Parquet 存储格式 - MS-SWIFT 原生支持）:
 {
-    "messages": "[{\"role\": \"user\", \"content\": \"...\"}, ...]",  # JSON 字符串
-    "images": ["base64...", ...],  # list of base64 strings (可为空)
-    "videos": ["/path/to/video.mp4", ...],  # list of paths (可为空)
-    "source_file": "...",
+    "query": "<image>图片中有什么异常",  # 用户问题（包含 <image>/<video> 占位符）
+    "response": "检测到以下异常...",  # 助手回答
+    "system": "",  # 系统提示（可选）
+    "history": [],  # 历史对话（单轮 QA 为空列表）
+    "images": ["data:image/jpg;base64,{base64}"],  # Data URL 格式
+    "videos": ["/path/to/video.mp4"],  # 路径或 Data URL
+    "source_file": "example.jpg",
     "media_type": "image" | "pdf" | "video",
-    "llm_provider": "...",
-    "model_name": "..."
+    "llm_provider": "openai",
+    "model_name": "gpt-4"
 }
 
-训练时需要的格式（反序列化后）:
-{
-    "messages": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
-    "images": [...],
-    "videos": [...]
-}
+官方示例:
+{"system": "<system>", "query": "<query>", "response": "<response>", "history": [["<query1>", "<response1>"]]}
 """
 
 import json
@@ -90,24 +89,48 @@ class DatasetConverter:
         if not self.uploads_dir.exists():
             logger.warning(f"uploads 目录不存在: {self.uploads_dir}")
 
-    def image_to_base64(self, image_path: Path) -> str:
-        """将图像转换为base64编码"""
+    def image_to_data_url(self, image_path: Path) -> str:
+        """
+        将图像转换为 Data URL 格式
+
+        格式: data:image/{ext};base64,{base64_encoded}
+        MS-SWIFT 官方要求的格式
+
+        Args:
+            image_path: 图片路径
+
+        Returns:
+            Data URL 字符串
+        """
         try:
+            # 获取文件扩展名
+            ext = image_path.suffix.lower().lstrip('.')
+            if ext == 'jpg':
+                ext = 'jpeg'  # MIME type 使用 jpeg 而不是 jpg
+
+            # 读取文件并编码
             with open(image_path, "rb") as f:
-                return base64.b64encode(f.read()).decode("utf-8")
+                base64_data = base64.b64encode(f.read()).decode("utf-8")
+
+            # 返回 Data URL 格式
+            return f"data:image/{ext};base64,{base64_data}"
         except Exception as e:
             logger.error(f"图像编码失败 {image_path}: {e}")
             raise
 
     def process_image_instruction(self, inst_data: Dict) -> Optional[Dict]:
         """
-        处理图像类型的instruction
+        处理图像类型的 instruction
+
+        转换为 MS-SWIFT query-response 格式:
+        - instruction → query (添加 <image> 占位符)
+        - raw_response → response
 
         Args:
             inst_data: instruction 数据
 
         Returns:
-            转换后的数据（统一 schema）
+            转换后的数据（MS-SWIFT 标准格式）
         """
         image_rel_path = inst_data["image"]
 
@@ -118,19 +141,16 @@ class DatasetConverter:
             logger.warning(f"原始图片不存在: {upload_path}")
             return None
 
-        # 转换为 base64
-        image_b64 = self.image_to_base64(upload_path)
+        # 转换为 Data URL 格式
+        image_data_url = self.image_to_data_url(upload_path)
 
-        # 构建 messages（多模态格式）
-        messages = [
-            {"role": "user", "content": f"<image>{inst_data['instruction']}"},
-            {"role": "assistant", "content": inst_data["raw_response"]},
-        ]
-
-        # 统一 schema：所有样本都有 images 和 videos 字段
+        # 构建 MS-SWIFT 格式（query-response）
         return {
-            "messages": messages,  # list of dict
-            "images": [image_b64],  # list of base64 strings
+            "query": f"<image>{inst_data['instruction']}",  # 用户问题
+            "response": inst_data["raw_response"],  # 助手回答
+            "system": "",  # 系统提示（可选）
+            "history": [],  # 历史对话（单轮 QA 为空）
+            "images": [image_data_url],  # Data URL 格式
             "videos": [],  # 空列表（该样本没有视频）
             "source_file": str(image_rel_path),
             "media_type": "image",
@@ -142,14 +162,18 @@ class DatasetConverter:
         """
         处理 PDF 类型的 instruction
 
-        提取 PDF 的所有页面为图片（base64），不关注 annotations
+        提取 PDF 的所有页面为图片（Data URL），不关注 annotations
         训练目标：让模型学会识别 raw_response 中描述的问题页
+
+        转换为 MS-SWIFT query-response 格式:
+        - instruction → query (添加多个 <image> 占位符)
+        - raw_response → response
 
         Args:
             inst_data: instruction 数据
 
         Returns:
-            转换后的数据（统一 schema）
+            转换后的数据（MS-SWIFT 标准格式）
         """
         pdf_rel_path = inst_data["pdf"]
 
@@ -166,7 +190,7 @@ class DatasetConverter:
             logger.error("PyMuPDF 未安装，无法处理 PDF。请安装: pip install pymupdf")
             return None
 
-        images_b64 = []
+        images_data_urls = []
 
         try:
             doc = pymupdf.open(pdf_path)
@@ -178,9 +202,10 @@ class DatasetConverter:
                 pix = page.get_pixmap(matrix=pymupdf.Matrix(2, 2))  # 2x 缩放
                 img_bytes = pix.tobytes("png")
 
-                # 转为 base64
-                image_b64 = base64.b64encode(img_bytes).decode("utf-8")
-                images_b64.append(image_b64)
+                # 转为 Data URL 格式
+                base64_data = base64.b64encode(img_bytes).decode("utf-8")
+                data_url = f"data:image/png;base64,{base64_data}"
+                images_data_urls.append(data_url)
 
             doc.close()
 
@@ -188,24 +213,21 @@ class DatasetConverter:
             logger.error(f"从 PDF 提取页面失败 {pdf_path}: {e}")
             return None
 
-        if not images_b64:
+        if not images_data_urls:
             logger.warning(f"PDF {pdf_rel_path} 没有可用的页面")
             return None
 
-        # 构建 messages
-        image_placeholders = "".join(["<image>"] * len(images_b64))
-        messages = [
-            {
-                "role": "user",
-                "content": f"{image_placeholders}{inst_data['instruction']}",
-            },
-            {"role": "assistant", "content": inst_data["raw_response"]},
-        ]
+        # 构建 query（多个 <image> 占位符）
+        image_placeholders = "".join(["<image>"] * len(images_data_urls))
+        query = f"{image_placeholders}{inst_data['instruction']}"
 
-        # 统一 schema：所有样本都有 images 和 videos 字段
+        # 构建 MS-SWIFT 格式（query-response）
         return {
-            "messages": messages,  # list of dict
-            "images": images_b64,  # list of base64 strings
+            "query": query,  # 用户问题（包含多个 <image>）
+            "response": inst_data["raw_response"],  # 助手回答
+            "system": "",  # 系统提示（可选）
+            "history": [],  # 历史对话（单轮 QA 为空）
+            "images": images_data_urls,  # Data URL 格式列表
             "videos": [],  # 空列表（该样本没有视频）
             "source_file": str(pdf_rel_path),
             "media_type": "pdf",
@@ -217,14 +239,20 @@ class DatasetConverter:
         """
         处理视频类型的 instruction
 
-        视频文件太大，不转 base64，直接使用路径
+        视频文件太大，使用绝对路径（不转 base64）
         训练目标：让模型学会识别 raw_response 中描述的问题帧
+
+        转换为 MS-SWIFT query-response 格式:
+        - instruction → query (添加 <video> 占位符)
+        - raw_response → response
+
+        注：如需 Data URL 格式，可改为: data:video/mp4;base64,{base64}
 
         Args:
             inst_data: instruction 数据
 
         Returns:
-            转换后的数据（统一 schema）
+            转换后的数据（MS-SWIFT 标准格式）
         """
         video_rel_path = inst_data["video"]
 
@@ -235,17 +263,14 @@ class DatasetConverter:
             logger.warning(f"原始视频不存在: {upload_path}")
             return None
 
-        # 构建 messages（多模态格式）
-        messages = [
-            {"role": "user", "content": f"<video>{inst_data['instruction']}"},
-            {"role": "assistant", "content": inst_data["raw_response"]},
-        ]
-
-        # 统一 schema：所有样本都有 images 和 videos 字段
+        # 构建 MS-SWIFT 格式（query-response）
         return {
-            "messages": messages,  # list of dict
+            "query": f"<video>{inst_data['instruction']}",  # 用户问题
+            "response": inst_data["raw_response"],  # 助手回答
+            "system": "",  # 系统提示（可选）
+            "history": [],  # 历史对话（单轮 QA 为空）
             "images": [],  # 空列表（该样本没有图片）
-            "videos": [str(upload_path)],  # list of paths
+            "videos": [str(upload_path)],  # 使用绝对路径（可选 Data URL）
             "source_file": str(video_rel_path),
             "media_type": "video",
             "llm_provider": inst_data.get("llm_provider", ""),
@@ -330,9 +355,8 @@ class DatasetConverter:
         """
         保存为单个 Parquet 文件（使用 HuggingFace datasets）
 
-        重要：将 messages 序列化为 JSON 字符串，避免列式存储导致格式错误
-        MS-SWIFT 训练时需要保持原始的 chat template 格式：
-        [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}]
+        使用 MS-SWIFT 原生支持的 query-response 格式，无需序列化
+        所有字段都是简单类型（字符串或列表），可以直接保存
         """
         try:
             from datasets import Dataset, Features, Value, Sequence
@@ -340,27 +364,22 @@ class DatasetConverter:
             logger.error("datasets 库未安装，请安装: pip install datasets")
             raise
 
-        # 序列化 messages 字段为 JSON 字符串
-        serialized_results = []
-        for sample in results:
-            sample_copy = sample.copy()
-            # 将 messages 从 list of dict 转换为 JSON 字符串
-            sample_copy["messages"] = json.dumps(sample["messages"], ensure_ascii=False)
-            serialized_results.append(sample_copy)
-
-        # 显式定义 Features（messages 现在是字符串）
+        # 显式定义 Features（MS-SWIFT 标准格式）
         features = Features({
-            "messages": Value("string"),  # JSON 字符串（保持 chat template 格式）
-            "images": Sequence(Value("string")),  # list of base64 strings
-            "videos": Sequence(Value("string")),  # list of paths
+            "query": Value("string"),  # 用户问题
+            "response": Value("string"),  # 助手回答
+            "system": Value("string"),  # 系统提示
+            "history": Sequence(Sequence(Value("string"))),  # 历史对话 [["q1", "r1"], ...]
+            "images": Sequence(Value("string")),  # Data URL 列表
+            "videos": Sequence(Value("string")),  # 路径或 Data URL 列表
             "source_file": Value("string"),
             "media_type": Value("string"),
             "llm_provider": Value("string"),
             "model_name": Value("string"),
         })
 
-        # 从序列化后的数据创建 Dataset
-        dataset = Dataset.from_list(serialized_results, features=features)
+        # 从数据创建 Dataset
+        dataset = Dataset.from_list(results, features=features)
 
         # 保存为 Parquet
         dataset.to_parquet(output_path)
@@ -387,11 +406,11 @@ class DatasetConverter:
         """
         自动分片保存（使用 HuggingFace datasets）
 
-        重要：将 messages 序列化为 JSON 字符串，避免列式存储导致格式错误
-        MS-SWIFT 训练时需要保持原始的 chat template 格式
+        使用 MS-SWIFT 原生支持的 query-response 格式
+        无需序列化，所有字段都是简单类型
 
         Args:
-            results: 转换后的数据（统一 schema）
+            results: 转换后的数据（MS-SWIFT 标准格式）
             output_dir: 输出目录
             output_prefix: 文件前缀
             max_shard_size_mb: 每个分片最大大小（MB）
@@ -408,56 +427,58 @@ class DatasetConverter:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        # 序列化 messages 字段为 JSON 字符串
-        serialized_results = []
-        for sample in results:
-            sample_copy = sample.copy()
-            # 将 messages 从 list of dict 转换为 JSON 字符串
-            sample_copy["messages"] = json.dumps(sample["messages"], ensure_ascii=False)
-            serialized_results.append(sample_copy)
-
-        # 显式定义 Features（messages 现在是字符串）
+        # 显式定义 Features（MS-SWIFT 标准格式）
         features = Features({
-            "messages": Value("string"),  # JSON 字符串（保持 chat template 格式）
-            "images": Sequence(Value("string")),  # list of base64 strings
-            "videos": Sequence(Value("string")),  # list of paths
+            "query": Value("string"),  # 用户问题
+            "response": Value("string"),  # 助手回答
+            "system": Value("string"),  # 系统提示
+            "history": Sequence(Sequence(Value("string"))),  # 历史对话
+            "images": Sequence(Value("string")),  # Data URL 列表
+            "videos": Sequence(Value("string")),  # 路径或 Data URL 列表
             "source_file": Value("string"),
             "media_type": Value("string"),
             "llm_provider": Value("string"),
             "model_name": Value("string"),
         })
 
-        # 创建 Dataset（使用序列化后的数据）
-        dataset = Dataset.from_list(serialized_results, features=features)
+        # 创建 Dataset
+        dataset = Dataset.from_list(results, features=features)
 
         # 预估每个样本的大小（用于分片）
         def estimate_size(sample: Dict) -> int:
             """估算样本大小（字节）"""
             size = 0
-            # images 字段（base64 字符串列表）
+            # images 字段（Data URL 字符串列表）
             if "images" in sample:
                 for img in sample["images"]:
                     size += len(img) if isinstance(img, str) else 0
-            # videos 字段（路径列表）
+            # videos 字段（路径或 Data URL 列表）
             if "videos" in sample:
                 for vid in sample["videos"]:
                     size += len(vid) if isinstance(vid, str) else 0
-            # messages 字段（现在是 JSON 字符串）
-            if "messages" in sample:
-                size += len(sample["messages"]) if isinstance(sample["messages"], str) else 0
+            # query 和 response 字段
+            for key in ["query", "response", "system"]:
+                if key in sample:
+                    size += len(str(sample[key]))
+            # history 字段（嵌套列表）
+            if "history" in sample and isinstance(sample["history"], list):
+                for turn in sample["history"]:
+                    if isinstance(turn, list):
+                        for msg in turn:
+                            size += len(str(msg))
             # 其他字段
             for key in ["source_file", "media_type", "llm_provider", "model_name"]:
                 if key in sample:
                     size += len(str(sample[key]))
             return size
 
-        # 分片（使用序列化后的数据）
+        # 分片
         shards = []
         current_shard_indices = []
         current_size = 0
         max_size_bytes = max_shard_size_mb * 1024 * 1024
 
-        for idx, sample in enumerate(serialized_results):
+        for idx, sample in enumerate(results):
             sample_size = estimate_size(sample)
 
             # 检查是否需要创建新分片
@@ -526,9 +547,12 @@ class DatasetConverter:
                 "homepage": "",
                 "license": "",
                 "features": {
-                    "messages": {"dtype": "string"},  # JSON 字符串（chat template 格式）
-                    "images": {"dtype": "list"},  # list of base64 strings
-                    "videos": {"dtype": "list"},  # list of paths
+                    "query": {"dtype": "string"},  # 用户问题
+                    "response": {"dtype": "string"},  # 助手回答
+                    "system": {"dtype": "string"},  # 系统提示
+                    "history": {"dtype": "list"},  # 历史对话 [["q1", "r1"], ...]
+                    "images": {"dtype": "list"},  # Data URL 列表
+                    "videos": {"dtype": "list"},  # 路径或 Data URL 列表
                     "source_file": {"dtype": "string"},
                     "media_type": {"dtype": "string"},
                     "llm_provider": {"dtype": "string"},
