@@ -379,9 +379,24 @@ class TrainService:
         Returns:
             dict: 进度信息（如果有）
         """
+        result = {}
+
+        # 1. 优先解析 tqdm 进度条（格式：Train: 91% █████████▏  1600/1700）
+        # 这样可以让进度条与日志中显示的百分比一致
+        tqdm_pattern = r'Train:\s*(\d+)%.*?(\d+)/(\d+)'
+        tqdm_match = re.search(tqdm_pattern, log_line)
+        if tqdm_match:
+            step_percent = int(tqdm_match.group(1))
+            current_step = int(tqdm_match.group(2))
+            total_steps = int(tqdm_match.group(3))
+
+            # 使用 tqdm 显示的百分比作为主进度
+            result['progress'] = float(step_percent)
+            result['current_step'] = current_step
+            result['total_steps'] = total_steps
+
+        # 2. 解析 trainer 输出的 JSON 信息（loss, epoch, learning_rate）
         try:
-            # 尝试解析 trainer 输出的进度信息
-            # 示例: {'loss': 2.5, 'learning_rate': 1e-4, 'epoch': 0.5}
             if '{' in log_line and '}' in log_line:
                 # 提取 JSON 部分
                 json_start = log_line.index('{')
@@ -392,28 +407,27 @@ class TrainService:
                 json_str = json_str.replace("'", '"')
                 data = json.loads(json_str)
 
-                result = {}
-
                 # 提取 loss
                 if 'loss' in data:
                     result['loss'] = float(data['loss'])
 
-                # 提取 epoch 和计算进度
+                # 提取 epoch（用于显示当前轮次，但不用于计算主进度）
                 if 'epoch' in data:
                     current_epoch = float(data['epoch'])
                     result['current_epoch'] = current_epoch
-                    result['progress'] = (current_epoch / total_epochs) * 100
+
+                    # 只有在没有 tqdm 进度时，才使用 epoch 计算进度
+                    if 'progress' not in result:
+                        result['progress'] = (current_epoch / total_epochs) * 100
 
                 # 提取学习率
                 if 'learning_rate' in data:
                     result['learning_rate'] = float(data['learning_rate'])
 
-                return result if result else None
-
         except (ValueError, KeyError, json.JSONDecodeError):
             pass
 
-        return None
+        return result if result else None
 
     async def _send_log_to_websocket(self, task_id: str, message: str):
         """
