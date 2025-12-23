@@ -88,12 +88,11 @@ class DeployService:
             "--model", model_path,
             "--infer_backend", "vllm" if use_vllm else "pt",
             "--served_model_name", served_model_name,
-            "--host", host,
             "--port", str(port),
         ]
 
-        # Adapter 路径
-        if adapter_path:
+        # Adapter 路径（确保不是空字符串）
+        if adapter_path and adapter_path.strip():
             cmd.extend(["--adapters", adapter_path])
 
         # 可选参数
