@@ -18,6 +18,9 @@ logger = logging.getLogger(__name__)
 DEPLOY_DIR = Path("/app/deployments")
 DEPLOY_DIR.mkdir(parents=True, exist_ok=True)
 
+# 模型目录
+MODEL_DIR = Path("/app/models")
+
 
 class DeployService:
     """部署服务类 - 管理 vllm 推理服务器"""
@@ -25,6 +28,34 @@ class DeployService:
     def __init__(self):
         self.running_deployments: Dict[str, Dict[str, Any]] = {}
         self.base_port = 8000  # vllm 默认端口
+
+    def resolve_model_path(self, model_id: str) -> str:
+        """
+        解析模型路径
+
+        如果模型在本地存在（/app/models/{model_id}），返回完整路径
+        否则返回 model_id，让 ms-swift 从 ModelScope 下载
+
+        Args:
+            model_id: 模型ID（如 Qwen/Qwen2.5-0.6B-Instruct）
+
+        Returns:
+            str: 模型路径或ID
+        """
+        # 如果已经是绝对路径，直接返回
+        if Path(model_id).is_absolute():
+            logger.info(f"[resolve_model_path] 已经是绝对路径: {model_id}")
+            return model_id
+
+        # 检查本地模型目录
+        local_model_path = MODEL_DIR / model_id
+        if local_model_path.exists() and (local_model_path / "config.json").exists():
+            logger.info(f"[resolve_model_path] 使用本地模型: {local_model_path}")
+            return str(local_model_path)
+
+        # 本地不存在，返回 model_id（ms-swift 会自动下载）
+        logger.info(f"[resolve_model_path] 本地模型不存在，将从 ModelScope 下载: {model_id}")
+        return model_id
 
     def _get_next_port(self) -> int:
         """获取下一个可用端口"""
@@ -82,6 +113,11 @@ class DeployService:
         if not model_path or not model_path.strip():
             raise ValueError("model_path 不能为空")
 
+        # 解析模型路径（优先使用本地模型）
+        resolved_model_path = self.resolve_model_path(model_path)
+        logger.info(f"[部署] 原始模型路径: {model_path}")
+        logger.info(f"[部署] 解析后模型路径: {resolved_model_path}")
+
         # 分配端口
         if port is None:
             port = self._get_next_port()
@@ -99,7 +135,7 @@ class DeployService:
         # 官方示例：swift deploy --model MODEL --infer_backend vllm --max_new_tokens 2048 --served_model_name NAME
         cmd = [
             "swift", "deploy",
-            "--model", model_path,
+            "--model", resolved_model_path,  # 使用解析后的路径
             "--infer_backend", "vllm" if use_vllm else "pt",
             "--served_model_name", served_model_name,
         ]
@@ -194,7 +230,7 @@ class DeployService:
         # 保存部署信息
         deployment_info = {
             "deployment_id": deployment_id,
-            "model_path": model_path,
+            "model_path": resolved_model_path,  # 保存解析后的路径
             "served_model_name": served_model_name,
             "port": port,
             "gpu_devices": gpu_devices,
