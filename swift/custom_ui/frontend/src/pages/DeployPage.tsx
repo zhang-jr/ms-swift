@@ -130,12 +130,6 @@ const DeployPage = () => {
     })
   }
 
-  // 复制端点地址
-  const handleCopyEndpoint = (endpoint: string) => {
-    navigator.clipboard.writeText(endpoint)
-    message.success('端点地址已复制')
-  }
-
   // 显示使用示例
   const handleShowExample = (deployment: any) => {
     setSelectedDeployment(deployment)
