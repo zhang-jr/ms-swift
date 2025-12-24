@@ -590,6 +590,7 @@ class DeployService:
             "api_endpoint": deployment["api_endpoint"],
             "status": deployment.get("status", "unknown"),
             "pid": deployment["pid"],
+            "gpu_id": deployment.get("gpu_devices", "N/A"),  # 前端显示用
             "uptime_seconds": time.time() - deployment["started_at"],
         }
 

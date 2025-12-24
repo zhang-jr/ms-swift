@@ -165,15 +165,14 @@ const DeployPage = () => {
     },
     {
       title: '模型',
-      dataIndex: 'model_id',
-      key: 'model_id',
+      dataIndex: 'served_model_name',
+      key: 'served_model_name',
       ellipsis: true,
-      render: (text: string) => {
-        // 只显示模型名称，去掉路径前缀
-        const modelName = text.split('/').pop() || text
+      render: (text: string, record: any) => {
+        // 显示 served_model_name，tooltip 显示完整路径
         return (
-          <Text ellipsis={{ tooltip: text }} style={{ maxWidth: 200 }}>
-            {modelName}
+          <Text ellipsis={{ tooltip: record.model_path }} style={{ maxWidth: 200 }}>
+            {text}
           </Text>
         )
       },
@@ -395,47 +394,72 @@ const DeployPage = () => {
                       : '选择训练输出模型'
                   }
                   showSearch
+                  onChange={(value) => {
+                    // 选中模型时，自动设置 served_model_name
+                    const selectedModel = (modelSource === 'base' ? baseModels : trainedModels).find(
+                      (m) => m.model_id === value
+                    )
+                    if (selectedModel) {
+                      form.setFieldsValue({ served_model_name: selectedModel.model_name })
+                    }
+                  }}
                   filterOption={(input, option) => {
                     const searchText = input.toLowerCase()
-                    // 只搜索 value（绝对路径），因为 label 是 JSX Element
-                    return (
-                      (option?.value as string)?.toLowerCase().includes(searchText) ||
-                      false
-                    )
+                    const modelData = option?.data as { model?: ModelInfo }
+                    // 搜索 model_name 和 model_id
+                    if (modelData?.model) {
+                      const m = modelData.model
+                      return (
+                        m.model_name.toLowerCase().includes(searchText) ||
+                        m.model_id.toLowerCase().includes(searchText)
+                      )
+                    }
+                    return false
                   }}
                   options={
                     (modelSource === 'base' ? baseModels : trainedModels).map((m) => ({
-                      label: (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div style={{ flex: 1, overflow: 'hidden' }}>
-                            <div style={{ fontWeight: 500 }}>{m.model_name}</div>
-                            <div
-                              style={{
-                                fontSize: '12px',
-                                color: '#888',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                              }}
-                              title={m.model_id}
-                            >
-                              {m.model_id}
-                            </div>
-                          </div>
-                          <Space>
-                            {m.model_type === 'adapter' ? (
-                              <Tag color="blue">Adapter</Tag>
-                            ) : (
-                              <Tag color="green">Base</Tag>
-                            )}
-                            {m.size && <Tag>{m.size}</Tag>}
-                          </Space>
-                        </div>
-                      ),
-                      value: m.model_id,
+                      label: m.model_name,  // 选中后显示简短的 model_name
+                      value: m.model_id,    // 实际传递的值（绝对路径）
+                      data: { model: m },   // 附加数据供 optionRender 使用
                     }))
                   }
+                  optionRender={(option) => {
+                    // 下拉列表中的自定义渲染
+                    const m = (option.data as { model: ModelInfo }).model
+                    return (
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ flex: 1, overflow: 'hidden' }}>
+                          <div style={{ fontWeight: 500 }}>{m.model_name}</div>
+                          <div
+                            style={{
+                              fontSize: '12px',
+                              color: '#888',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap',
+                            }}
+                            title={m.model_id}
+                          >
+                            {m.model_id}
+                          </div>
+                        </div>
+                        <Space>
+                          {m.model_type === 'adapter' ? (
+                            <Tag color="blue">Adapter</Tag>
+                          ) : (
+                            <Tag color="green">Base</Tag>
+                          )}
+                          {m.size && <Tag>{m.size}</Tag>}
+                        </Space>
+                      </div>
+                    )
+                  }}
                 />
+              </Form.Item>
+
+              {/* 隐藏字段：自动设置 served_model_name */}
+              <Form.Item name="served_model_name" hidden>
+                <Input />
               </Form.Item>
 
               <Form.Item label="Adapter 路径 (可选)" name="adapter_path">
@@ -559,7 +583,7 @@ client = OpenAI(
 
 # 发送对话请求
 response = client.chat.completions.create(
-    model="${selectedDeployment.model_id.split('/').pop()}",
+    model="${selectedDeployment.served_model_name}",  # 使用部署时指定的模型名称
     messages=[
         {"role": "system", "content": "你是一个有用的助手。"},
         {"role": "user", "content": "你好，请介绍一下自己。"}
@@ -593,7 +617,7 @@ client = OpenAI(
 
 # 发送对话请求
 response = client.chat.completions.create(
-    model="${selectedDeployment.model_id.split('/').pop()}",
+    model="${selectedDeployment.served_model_name}",  # 使用部署时指定的模型名称
     messages=[
         {"role": "system", "content": "你是一个有用的助手。"},
         {"role": "user", "content": "你好，请介绍一下自己。"}
@@ -617,7 +641,7 @@ print(response.choices[0].message.content)`}
 `curl ${selectedDeployment.endpoint} \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "${selectedDeployment.model_id.split('/').pop()}",
+    "model": "${selectedDeployment.served_model_name}",
     "messages": [
       {"role": "system", "content": "你是一个有用的助手。"},
       {"role": "user", "content": "你好，请介绍一下自己。"}
@@ -642,7 +666,7 @@ print(response.choices[0].message.content)`}
 {`curl ${selectedDeployment.endpoint} \\
   -H "Content-Type: application/json" \\
   -d '{
-    "model": "${selectedDeployment.model_id.split('/').pop()}",
+    "model": "${selectedDeployment.served_model_name}",
     "messages": [
       {"role": "system", "content": "你是一个有用的助手。"},
       {"role": "user", "content": "你好，请介绍一下自己。"}
