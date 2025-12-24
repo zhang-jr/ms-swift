@@ -90,9 +90,14 @@ async def start_deployment(request: DeployRequest, background_tasks: BackgroundT
     # 生成部署 ID
     deployment_id = f"deploy-{uuid.uuid4().hex[:8]}"
 
-    logger.info(f"收到部署请求: {deployment_id}, 模型: {request.model_id_or_path}")
-    logger.info(f"请求参数: adapter_path={request.adapter_path}, port={request.port}, "
-                f"use_vllm={request.use_vllm}, max_length={request.max_length}")
+    # 使用 print 替代 logger.info（logging 未配置，info 不会输出）
+    print(f"[DEBUG] 收到部署请求: {deployment_id}")
+    print(f"[DEBUG] 模型路径: {request.model_id_or_path}")
+    print(f"[DEBUG] Adapter 路径: {request.adapter_path}")
+    print(f"[DEBUG] 端口: {request.port}")
+    print(f"[DEBUG] use_vllm: {request.use_vllm}")
+    print(f"[DEBUG] max_length: {request.max_length}")
+    print(f"[DEBUG] 完整请求对象: {request}")
 
     # 参数转换：前端 -> 后端
     # served_model_name: 从模型路径提取（如 Qwen/Qwen2.5-7B-Instruct -> Qwen2.5-7B-Instruct）

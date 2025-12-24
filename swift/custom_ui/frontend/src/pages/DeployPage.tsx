@@ -46,6 +46,7 @@ const DeployPage = () => {
   const loadModels = async () => {
     try {
       const data = await modelAPI.getModels()
+      console.log('[DeployPage] 加载的模型列表:', data)
       setModels(data)
     } catch (error) {
       message.error('加载模型列表失败')
@@ -63,6 +64,8 @@ const DeployPage = () => {
 
   // 启动部署
   const handleStartDeployment = async (values: DeployRequest) => {
+    console.log('[DeployPage] 表单提交的值:', values)
+    console.log('[DeployPage] model_id_or_path:', values.model_id_or_path)
     setLoading(true)
     try {
       await deployAPI.startDeployment(values)
@@ -70,6 +73,7 @@ const DeployPage = () => {
       form.resetFields()
       loadDeployments()
     } catch (error: any) {
+      console.error('[DeployPage] 部署失败:', error)
       message.error(error.message || '启动部署失败')
     } finally {
       setLoading(false)
