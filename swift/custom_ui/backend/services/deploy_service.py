@@ -21,6 +21,7 @@ DEPLOY_DIR.mkdir(parents=True, exist_ok=True)
 
 # 模型目录
 MODEL_DIR = Path("/app/models")
+OUTPUT_DIR = Path("/app/output")  # 训练输出目录
 
 
 class DeployService:
@@ -145,35 +146,54 @@ class DeployService:
         """
         解析模型路径
 
-        如果模型在本地存在（/app/models/{model_id}），返回完整路径
-        否则返回 model_id，让 ms-swift 从 ModelScope 下载
+        检查顺序：
+        1. 如果是绝对路径，直接返回
+        2. 检查 /app/models/{model_id}（本地模型）
+        3. 检查 /app/output（训练输出模型）
+        4. 返回 model_id（让 ms-swift 从 ModelScope 下载）
 
         Args:
-            model_id: 模型ID（如 Qwen/Qwen2.5-0.6B-Instruct）
+            model_id: 模型ID 或完整路径
+                - "Qwen/Qwen2.5-7B-Instruct"（本地模型或远程）
+                - "/app/models/Qwen/Qwen2.5-7B-Instruct"（绝对路径）
+                - "/app/output/xxx/v0-xxx/checkpoint-1"（训练输出）
 
         Returns:
-            str: 模型路径或ID
+            str: 模型路径
         """
-        # 如果已经是绝对路径，直接返回
+        # 1. 如果已经是绝对路径，直接返回
         if Path(model_id).is_absolute():
             print(f"[DEBUG][resolve_model_path] 已经是绝对路径: {model_id}")
             return model_id
 
-        # 检查本地模型目录
+        # 2. 检查本地模型目录 (/app/models)
         local_model_path = MODEL_DIR / model_id
-        print(f"[DEBUG][resolve_model_path] 检查本地路径: {local_model_path}")
-        print(f"[DEBUG][resolve_model_path] 路径存在: {local_model_path.exists()}")
+        print(f"[DEBUG][resolve_model_path] 检查本地模型: {local_model_path}")
 
         if local_model_path.exists():
-            config_exists = (local_model_path / "config.json").exists()
-            print(f"[DEBUG][resolve_model_path] config.json 存在: {config_exists}")
+            # 检查是否有 config.json（基础模型）或 adapter_config.json（Adapter）
+            has_config = (local_model_path / "config.json").exists()
+            has_adapter_config = (local_model_path / "adapter_config.json").exists()
 
-            if config_exists:
+            if has_config or has_adapter_config:
                 print(f"[DEBUG][resolve_model_path] ✓ 使用本地模型: {local_model_path}")
                 return str(local_model_path)
 
-        # 本地不存在，返回 model_id（ms-swift 会自动下载）
-        print(f"[DEBUG][resolve_model_path] 本地模型不存在，将从 ModelScope 下载: {model_id}")
+        # 3. 检查训练输出目录 (/app/output)
+        # model_id 可能是训练输出的相对路径（如 "task-id/v0-xxx/checkpoint-1"）
+        output_model_path = OUTPUT_DIR / model_id
+        print(f"[DEBUG][resolve_model_path] 检查训练输出: {output_model_path}")
+
+        if output_model_path.exists():
+            has_config = (output_model_path / "config.json").exists()
+            has_adapter_config = (output_model_path / "adapter_config.json").exists()
+
+            if has_config or has_adapter_config:
+                print(f"[DEBUG][resolve_model_path] ✓ 使用训练输出模型: {output_model_path}")
+                return str(output_model_path)
+
+        # 4. 本地不存在，返回 model_id（ms-swift 会自动从 ModelScope 下载）
+        print(f"[DEBUG][resolve_model_path] 本地不存在，将从 ModelScope 下载: {model_id}")
         return model_id
 
     def _get_next_port(self) -> int:

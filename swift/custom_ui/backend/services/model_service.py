@@ -152,9 +152,11 @@ class ModelService:
                         "source": "output"
                     })
 
+            print(f"[INFO][ModelService] 扫描到 {len(models)} 个训练输出模型")
             logger.info(f"扫描到 {len(models)} 个训练输出模型")
 
         except Exception as e:
+            print(f"[ERROR][ModelService] 扫描训练输出模型失败: {e}")
             logger.error(f"扫描训练输出模型失败: {e}", exc_info=True)
 
         return models
