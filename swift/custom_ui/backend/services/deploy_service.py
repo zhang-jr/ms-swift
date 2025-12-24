@@ -44,17 +44,24 @@ class DeployService:
         """
         # 如果已经是绝对路径，直接返回
         if Path(model_id).is_absolute():
-            logger.info(f"[resolve_model_path] 已经是绝对路径: {model_id}")
+            print(f"[DEBUG][resolve_model_path] 已经是绝对路径: {model_id}")
             return model_id
 
         # 检查本地模型目录
         local_model_path = MODEL_DIR / model_id
-        if local_model_path.exists() and (local_model_path / "config.json").exists():
-            logger.info(f"[resolve_model_path] 使用本地模型: {local_model_path}")
-            return str(local_model_path)
+        print(f"[DEBUG][resolve_model_path] 检查本地路径: {local_model_path}")
+        print(f"[DEBUG][resolve_model_path] 路径存在: {local_model_path.exists()}")
+
+        if local_model_path.exists():
+            config_exists = (local_model_path / "config.json").exists()
+            print(f"[DEBUG][resolve_model_path] config.json 存在: {config_exists}")
+
+            if config_exists:
+                print(f"[DEBUG][resolve_model_path] ✓ 使用本地模型: {local_model_path}")
+                return str(local_model_path)
 
         # 本地不存在，返回 model_id（ms-swift 会自动下载）
-        logger.info(f"[resolve_model_path] 本地模型不存在，将从 ModelScope 下载: {model_id}")
+        print(f"[DEBUG][resolve_model_path] 本地模型不存在，将从 ModelScope 下载: {model_id}")
         return model_id
 
     def _get_next_port(self) -> int:
@@ -103,9 +110,9 @@ class DeployService:
             dict: 部署信息
         """
         # 参数验证
-        logger.info(f"开始部署验证 - deployment_id: {deployment_id}")
-        logger.info(f"参数检查 - model_path: {model_path}, adapter_path: {adapter_path}")
-        logger.info(f"参数检查 - use_vllm: {use_vllm}, port: {port}, max_model_len: {max_model_len}")
+        print(f"[DEBUG] 开始部署验证 - deployment_id: {deployment_id}")
+        print(f"[DEBUG] 参数检查 - model_path: {model_path}, adapter_path: {adapter_path}")
+        print(f"[DEBUG] 参数检查 - use_vllm: {use_vllm}, port: {port}, max_model_len: {max_model_len}")
 
         if deployment_id in self.running_deployments:
             raise ValueError(f"部署 {deployment_id} 已存在")
@@ -114,21 +121,22 @@ class DeployService:
             raise ValueError("model_path 不能为空")
 
         # 解析模型路径（优先使用本地模型）
+        print(f"[DEBUG] 开始解析模型路径: {model_path}")
         resolved_model_path = self.resolve_model_path(model_path)
-        logger.info(f"[部署] 原始模型路径: {model_path}")
-        logger.info(f"[部署] 解析后模型路径: {resolved_model_path}")
+        print(f"[DEBUG] ✓ 原始模型路径: {model_path}")
+        print(f"[DEBUG] ✓ 解析后模型路径: {resolved_model_path}")
 
         # 分配端口
         if port is None:
             port = self._get_next_port()
-            logger.info(f"自动分配端口: {port}")
+            print(f"[DEBUG] 自动分配端口: {port}")
         else:
-            logger.info(f"使用指定端口: {port}")
+            print(f"[DEBUG] 使用指定端口: {port}")
 
         # 确定服务模型名称
         if served_model_name is None:
             served_model_name = Path(model_path).name
-            logger.info(f"自动生成 served_model_name: {served_model_name}")
+            print(f"[DEBUG] 自动生成 served_model_name: {served_model_name}")
 
         # 构建 swift deploy 命令（参考官方文档和源代码）
         # 参考：DeployArguments 类接受的参数
@@ -162,11 +170,11 @@ class DeployService:
         # 日志文件
         log_file = DEPLOY_DIR / f"{deployment_id}.log"
 
-        logger.info(f"启动部署: {deployment_id}")
-        logger.info(f"完整命令: {' '.join(cmd)}")
-        logger.info(f"端口: {port}")
-        logger.info(f"GPU: {gpu_devices}")
-        logger.info(f"日志文件: {log_file}")
+        print(f"[DEBUG] 启动部署: {deployment_id}")
+        print(f"[DEBUG] 完整命令: {' '.join(cmd)}")
+        print(f"[DEBUG] 端口: {port}")
+        print(f"[DEBUG] GPU 设备: {gpu_devices}")
+        print(f"[DEBUG] 日志文件: {log_file}")
 
         # 启动进程
         try:
@@ -174,6 +182,8 @@ class DeployService:
                 **subprocess.os.environ,
                 "CUDA_VISIBLE_DEVICES": gpu_devices,
             }
+
+            print(f"[DEBUG] 环境变量 CUDA_VISIBLE_DEVICES: {gpu_devices}")
 
             with open(log_file, "w") as f:
                 process = subprocess.Popen(
@@ -184,31 +194,37 @@ class DeployService:
                     preexec_fn=subprocess.os.setsid if hasattr(subprocess.os, 'setsid') else None
                 )
 
-            logger.info(f"进程已启动，PID: {process.pid}")
+            print(f"[DEBUG] ✓ 进程已启动，PID: {process.pid}")
 
         except Exception as e:
-            logger.error(f"启动进程失败: {e}", exc_info=True)
+            print(f"[ERROR] 启动进程失败: {e}")
+            import traceback
+            print(f"[ERROR] 详细堆栈:\n{traceback.format_exc()}")
             raise RuntimeError(f"无法启动部署进程: {str(e)}")
 
         # 等待服务启动（检查健康状态）
-        max_retries = 30  # 最多等待 30 秒
+        max_retries = 300  # 最多等待 300 秒（5分钟，大模型加载需要更长时间）
         health_url = f"http://localhost:{port}/health"
 
-        logger.info(f"等待服务启动: {health_url}")
+        print(f"[DEBUG] 等待服务启动: {health_url}")
+        print(f"[DEBUG] 最大等待时间: {max_retries} 秒")
 
         for i in range(max_retries):
             try:
                 response = requests.get(health_url, timeout=1)
                 if response.status_code == 200:
-                    logger.info(f"✓ 部署 {deployment_id} 启动成功")
+                    print(f"[DEBUG] ✓ 部署 {deployment_id} 启动成功（用时 {i+1} 秒）")
                     break
-            except requests.RequestException:
-                pass
+            except requests.RequestException as e:
+                # 每 10 秒打印一次进度
+                if (i + 1) % 10 == 0:
+                    print(f"[DEBUG] 等待中... {i+1}/{max_retries} 秒（进程状态: {'运行中' if process.poll() is None else '已退出'}）")
 
             await asyncio.sleep(1)
 
             # 检查进程是否异常退出
             if process.poll() is not None:
+                print(f"[ERROR] 进程异常退出，退出码: {process.returncode}")
                 with open(log_file, "r") as f:
                     logs = f.read()
                 raise RuntimeError(
@@ -218,6 +234,7 @@ class DeployService:
                 )
         else:
             # 超时
+            print(f"[ERROR] 部署启动超时（{max_retries} 秒）")
             process.kill()
             with open(log_file, "r") as f:
                 logs = f.read()
@@ -263,7 +280,7 @@ class DeployService:
         deployment = self.running_deployments[deployment_id]
         process = deployment["process"]
 
-        logger.info(f"停止部署: {deployment_id} (PID: {process.pid})")
+        print(f"[DEBUG] 停止部署: {deployment_id} (PID: {process.pid})")
 
         # 优雅关闭
         try:
@@ -276,9 +293,9 @@ class DeployService:
             # 等待进程结束（最多 10 秒）
             try:
                 process.wait(timeout=10)
-                logger.info(f"✓ 部署 {deployment_id} 已停止")
+                print(f"[DEBUG] ✓ 部署 {deployment_id} 已停止")
             except subprocess.TimeoutExpired:
-                logger.warning(f"部署 {deployment_id} 未在 10 秒内停止，强制杀死")
+                print(f"[WARNING] 部署 {deployment_id} 未在 10 秒内停止，强制杀死")
                 # 强制杀死
                 if hasattr(subprocess.os, 'killpg'):
                     subprocess.os.killpg(subprocess.os.getpgid(process.pid), signal.SIGKILL)
@@ -287,7 +304,7 @@ class DeployService:
                 process.wait()
 
         except Exception as e:
-            logger.error(f"停止部署失败: {e}")
+            print(f"[ERROR] 停止部署失败: {e}")
             # 强制杀死
             try:
                 process.kill()
@@ -358,7 +375,7 @@ class DeployService:
                 status = self.get_deployment_status(deployment_id)
                 deployments.append(status)
             except Exception as e:
-                logger.error(f"获取部署状态失败: {deployment_id}, {e}")
+                print(f"[ERROR] 获取部署状态失败: {deployment_id}, {e}")
                 continue
 
         return deployments
