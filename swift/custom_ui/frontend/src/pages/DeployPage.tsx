@@ -37,14 +37,17 @@ const DeployPage = () => {
   const [loading, setLoading] = useState(false)
   const [deployments, setDeployments] = useState<any[]>([])
   const [models, setModels] = useState<ModelInfo[]>([])
+  const [gpuStatus, setGpuStatus] = useState<any>(null)
 
   useEffect(() => {
     loadModels()
     loadDeployments()
+    loadGpuStatus()
 
-    // 每 10 秒自动刷新部署列表（监控状态变化）
+    // 每 10 秒自动刷新部署列表和 GPU 状态
     const interval = setInterval(() => {
       loadDeployments()
+      loadGpuStatus()
     }, 10000)
 
     return () => clearInterval(interval)
@@ -66,6 +69,15 @@ const DeployPage = () => {
       setDeployments(deps)
     } catch (error) {
       message.error('加载部署列表失败')
+    }
+  }
+
+  const loadGpuStatus = async () => {
+    try {
+      const data = await deployAPI.getGpuStatus()
+      setGpuStatus(data)
+    } catch (error) {
+      console.error('加载 GPU 状态失败:', error)
     }
   }
 
@@ -134,19 +146,18 @@ const DeployPage = () => {
       key: 'model_id',
     },
     {
-      title: '端点地址',
-      dataIndex: 'endpoint',
-      key: 'endpoint',
-      render: (text: string) => (
-        <Space>
-          <Text code>{text}</Text>
-          <Button
-            size="small"
-            icon={<CopyOutlined />}
-            onClick={() => handleCopyEndpoint(text)}
-          />
-        </Space>
+      title: 'GPU',
+      dataIndex: 'gpu_id',
+      key: 'gpu_id',
+      render: (gpu_id: string) => (
+        <Tag color="cyan">GPU {gpu_id}</Tag>
       ),
+    },
+    {
+      title: '端口',
+      dataIndex: 'port',
+      key: 'port',
+      render: (port: number) => <Text code>{port}</Text>,
     },
     {
       title: '状态',
@@ -171,6 +182,21 @@ const DeployPage = () => {
         }
         return <Tag color={colorMap[status] || 'default'}>{textMap[status] || status}</Tag>
       },
+    },
+    {
+      title: '端点地址',
+      dataIndex: 'endpoint',
+      key: 'endpoint',
+      render: (text: string) => (
+        <Space>
+          <Text code style={{ fontSize: '12px' }}>{text}</Text>
+          <Button
+            size="small"
+            icon={<CopyOutlined />}
+            onClick={() => handleCopyEndpoint(text)}
+          />
+        </Space>
+      ),
     },
     {
       title: '创建时间',
@@ -216,6 +242,60 @@ const DeployPage = () => {
       <Paragraph type="secondary" style={{ fontSize: '15px', marginBottom: '24px' }}>
         <CloudServerOutlined /> 将模型部署为高性能 API 服务，支持 OpenAI 兼容接口
       </Paragraph>
+
+      {/* GPU 状态卡片 */}
+      {gpuStatus && (
+        <Card
+          title={`GPU 状态 (${gpuStatus.used_gpus}/${gpuStatus.total_gpus} 使用中)`}
+          bordered={false}
+          style={{ marginBottom: '24px' }}
+          extra={
+            <Button
+              size="small"
+              icon={<ReloadOutlined />}
+              onClick={loadGpuStatus}
+            >
+              刷新
+            </Button>
+          }
+        >
+          <Row gutter={[16, 16]}>
+            {gpuStatus.gpus.map((gpu: any) => (
+              <Col xs={24} sm={12} md={8} lg={6} key={gpu.gpu_id}>
+                <Card
+                  size="small"
+                  bordered
+                  style={{
+                    borderColor: gpu.status === 'available' ? '#52c41a' : '#ff7875',
+                  }}
+                >
+                  <Space direction="vertical" size="small" style={{ width: '100%' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Text strong>GPU {gpu.gpu_id}</Text>
+                      <Tag color={gpu.status === 'available' ? 'success' : 'error'}>
+                        {gpu.status === 'available' ? '空闲' : '使用中'}
+                      </Tag>
+                    </div>
+                    {gpu.deployments.length > 0 && (
+                      <div>
+                        {gpu.deployments.map((dep: any) => (
+                          <div key={dep.deployment_id} style={{ fontSize: '12px', color: '#8c8c8c' }}>
+                            <Text code style={{ fontSize: '11px' }}>
+                              {dep.deployment_id.substring(0, 8)}
+                            </Text>
+                            <br />
+                            <Text style={{ fontSize: '11px' }}>{dep.model.split('/').pop()}</Text>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Space>
+                </Card>
+              </Col>
+            ))}
+          </Row>
+        </Card>
+      )}
 
       <Row gutter={24}>
         <Col xs={24} lg={12}>

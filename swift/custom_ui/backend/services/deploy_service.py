@@ -7,7 +7,8 @@ import asyncio
 import time
 import json
 import logging
-from typing import Dict, Any, Optional
+import os
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 import requests
 import signal
@@ -29,6 +30,116 @@ class DeployService:
         self.running_deployments: Dict[str, Dict[str, Any]] = {}
         self.base_port = 8000  # vllm 默认端口
         self.monitor_tasks: Dict[str, asyncio.Task] = {}  # 后台监控任务
+        self.available_gpus = self._get_available_gpus()  # 可用 GPU 列表
+        print(f"[INFO][GPU] 检测到可用 GPU: {self.available_gpus}")
+
+    def _get_available_gpus(self) -> List[str]:
+        """
+        获取可用 GPU 列表（从 CUDA_VISIBLE_DEVICES 读取）
+
+        Returns:
+            list: GPU ID 列表（如 ['0', '1', '2', '3']）
+        """
+        cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+        print(f"[DEBUG][GPU] CUDA_VISIBLE_DEVICES: {cuda_visible_devices}")
+
+        # 解析 CUDA_VISIBLE_DEVICES（支持 "0,1,2,3" 或 "0" 格式）
+        if cuda_visible_devices:
+            gpu_ids = [gpu.strip() for gpu in cuda_visible_devices.split(",")]
+            return gpu_ids
+        else:
+            # 默认使用 GPU 0
+            return ["0"]
+
+    def _get_used_gpus(self) -> set:
+        """
+        获取已被占用的 GPU ID 集合
+
+        Returns:
+            set: 已占用的 GPU ID 集合（如 {'0', '1'}）
+        """
+        used_gpus = set()
+        for deployment in self.running_deployments.values():
+            # 只统计运行中或启动中的部署
+            if deployment.get("status") in ["starting", "running"]:
+                gpu_devices = deployment.get("gpu_devices", "")
+                if gpu_devices:
+                    # 支持单卡（"0"）和多卡（"0,1"）
+                    for gpu_id in gpu_devices.split(","):
+                        used_gpus.add(gpu_id.strip())
+        return used_gpus
+
+    def _allocate_gpu(self, preferred_gpu: Optional[str] = None) -> Optional[str]:
+        """
+        分配 GPU（自动选择空闲 GPU 或使用指定 GPU）
+
+        Args:
+            preferred_gpu: 优先使用的 GPU ID（可选）
+
+        Returns:
+            str: 分配的 GPU ID，如果无可用 GPU 则返回 None
+        """
+        # 如果指定了 GPU，检查是否可用
+        if preferred_gpu is not None:
+            if preferred_gpu not in self.available_gpus:
+                print(f"[WARNING][GPU] 指定的 GPU {preferred_gpu} 不在可用列表中: {self.available_gpus}")
+                return None
+
+            used_gpus = self._get_used_gpus()
+            if preferred_gpu in used_gpus:
+                print(f"[WARNING][GPU] 指定的 GPU {preferred_gpu} 已被占用")
+                return None
+
+            print(f"[INFO][GPU] 使用指定 GPU: {preferred_gpu}")
+            return preferred_gpu
+
+        # 自动分配：选择第一个空闲 GPU
+        used_gpus = self._get_used_gpus()
+        for gpu_id in self.available_gpus:
+            if gpu_id not in used_gpus:
+                print(f"[INFO][GPU] 自动分配 GPU: {gpu_id}")
+                return gpu_id
+
+        # 无可用 GPU
+        print(f"[WARNING][GPU] 所有 GPU 已被占用: {used_gpus}")
+        return None
+
+    def get_gpu_status(self) -> Dict[str, Any]:
+        """
+        获取 GPU 使用状态
+
+        Returns:
+            dict: GPU 状态信息
+        """
+        used_gpus = self._get_used_gpus()
+        gpu_status = []
+
+        for gpu_id in self.available_gpus:
+            status = {
+                "gpu_id": gpu_id,
+                "status": "used" if gpu_id in used_gpus else "available",
+                "deployments": []
+            }
+
+            # 查找使用该 GPU 的部署
+            for deployment in self.running_deployments.values():
+                if deployment.get("status") in ["starting", "running"]:
+                    gpu_devices = deployment.get("gpu_devices", "")
+                    if gpu_id in gpu_devices.split(","):
+                        status["deployments"].append({
+                            "deployment_id": deployment["deployment_id"],
+                            "model": deployment["model_path"],
+                            "status": deployment["status"]
+                        })
+
+            gpu_status.append(status)
+
+        return {
+            "total_gpus": len(self.available_gpus),
+            "used_gpus": len(used_gpus),
+            "available_gpus": len(self.available_gpus) - len(used_gpus),
+            "gpus": gpu_status
+        }
 
     def resolve_model_path(self, model_id: str) -> str:
         """
@@ -83,7 +194,7 @@ class DeployService:
         served_model_name: Optional[str] = None,
         host: str = "0.0.0.0",
         port: Optional[int] = None,
-        gpu_devices: str = "0",
+        gpu_devices: Optional[str] = None,  # 改为可选，None 表示自动分配
         max_model_len: Optional[int] = None,
         use_vllm: bool = True,
         gpu_memory_utilization: Optional[float] = 0.9,
@@ -100,7 +211,7 @@ class DeployService:
             served_model_name: 服务模型名称（用于 OpenAI API）
             host: 服务 Host（默认 0.0.0.0）
             port: 服务端口（默认自动分配）
-            gpu_devices: GPU 设备 ID（如 "0" 或 "0,1"）
+            gpu_devices: GPU 设备 ID（可选，None=自动分配，"0"=指定 GPU 0）
             max_model_len: 最大模型长度（可选）
             use_vllm: 是否使用 vLLM 后端（默认 True）
             gpu_memory_utilization: GPU 内存利用率（默认 0.9）
@@ -114,12 +225,36 @@ class DeployService:
         print(f"[DEBUG] 开始部署验证 - deployment_id: {deployment_id}")
         print(f"[DEBUG] 参数检查 - model_path: {model_path}, adapter_path: {adapter_path}")
         print(f"[DEBUG] 参数检查 - use_vllm: {use_vllm}, port: {port}, max_model_len: {max_model_len}")
+        print(f"[DEBUG] 参数检查 - gpu_devices: {gpu_devices} (None=自动分配)")
 
         if deployment_id in self.running_deployments:
             raise ValueError(f"部署 {deployment_id} 已存在")
 
         if not model_path or not model_path.strip():
             raise ValueError("model_path 不能为空")
+
+        # GPU 自动分配
+        if gpu_devices is None:
+            # 自动分配空闲 GPU
+            allocated_gpu = self._allocate_gpu()
+            if allocated_gpu is None:
+                raise RuntimeError(
+                    f"无可用 GPU，所有 GPU 已被占用。"
+                    f"可用 GPU: {self.available_gpus}，"
+                    f"已占用: {self._get_used_gpus()}"
+                )
+            gpu_devices = allocated_gpu
+            print(f"[INFO][GPU] 自动分配 GPU: {gpu_devices}")
+        else:
+            # 用户指定 GPU，验证是否可用
+            allocated_gpu = self._allocate_gpu(preferred_gpu=gpu_devices)
+            if allocated_gpu is None:
+                raise RuntimeError(
+                    f"指定的 GPU {gpu_devices} 不可用。"
+                    f"可用 GPU: {self.available_gpus}，"
+                    f"已占用: {self._get_used_gpus()}"
+                )
+            print(f"[INFO][GPU] 使用指定 GPU: {gpu_devices}")
 
         # 解析模型路径（优先使用本地模型）
         print(f"[DEBUG] 开始解析模型路径: {model_path}")

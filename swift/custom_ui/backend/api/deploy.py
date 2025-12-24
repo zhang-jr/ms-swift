@@ -22,6 +22,7 @@ class DeployRequest(BaseModel):
     adapter_path: Optional[str] = None  # Adapter 路径（可选）
     host: Optional[str] = "0.0.0.0"  # 服务 Host
     port: Optional[int] = None  # 服务端口（None 表示自动分配）
+    gpu_id: Optional[str] = None  # GPU ID（None=自动分配，"0"=指定 GPU 0）
     max_length: Optional[int] = None  # 最大长度
     temperature: Optional[float] = 0.7  # 温度参数
     top_p: Optional[float] = None  # Top-p 参数
@@ -104,7 +105,7 @@ async def start_deployment(request: DeployRequest, background_tasks: BackgroundT
     served_model_name = request.model_id_or_path.split('/')[-1]
 
     try:
-        # 启动部署（异步，等待服务启动）
+        # 启动部署（异步，GPU 自动分配）
         deployment_info = await deploy_service.start_deployment(
             deployment_id=deployment_id,
             model_path=request.model_id_or_path,
@@ -112,7 +113,7 @@ async def start_deployment(request: DeployRequest, background_tasks: BackgroundT
             served_model_name=served_model_name,
             host=request.host or "0.0.0.0",
             port=request.port,
-            gpu_devices="0",  # 默认使用第一个 GPU
+            gpu_devices=request.gpu_id,  # None=自动分配，"0"=指定 GPU
             max_model_len=request.max_length,
             use_vllm=request.use_vllm if request.use_vllm is not None else True,
             gpu_memory_utilization=request.gpu_memory_utilization,
@@ -219,6 +220,7 @@ async def list_deployments():
                 "base_url": d["base_url"],
                 "pid": d.get("pid"),
                 "uptime_seconds": d.get("uptime_seconds"),
+                "gpu_id": d.get("gpu_devices", "N/A"),  # 添加 GPU 信息
             })
 
         return {"deployments": formatted_deployments}
@@ -249,3 +251,45 @@ async def get_deployment_logs(deployment_id: str, lines: int = 100):
     except Exception as e:
         logger.error(f"获取部署日志失败: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"获取部署日志失败: {str(e)}")
+
+
+@router.get("/gpu-status")
+async def get_gpu_status():
+    """
+    获取 GPU 使用状态
+
+    示例:
+        GET /api/deploy/gpu-status
+
+    Returns:
+        {
+            "total_gpus": 4,
+            "used_gpus": 2,
+            "available_gpus": 2,
+            "gpus": [
+                {
+                    "gpu_id": "0",
+                    "status": "used",
+                    "deployments": [
+                        {
+                            "deployment_id": "deploy-abc123",
+                            "model": "Qwen2.5-7B-Instruct",
+                            "status": "running"
+                        }
+                    ]
+                },
+                {
+                    "gpu_id": "1",
+                    "status": "available",
+                    "deployments": []
+                }
+            ]
+        }
+    """
+    try:
+        gpu_status = deploy_service.get_gpu_status()
+        return gpu_status
+
+    except Exception as e:
+        logger.error(f"获取 GPU 状态失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"获取 GPU 状态失败: {str(e)}")

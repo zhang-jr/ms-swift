@@ -26,4 +26,9 @@ export const deployAPI = {
   deleteDeployment: (deploymentId: string): Promise<{ message: string; deployment_id: string }> => {
     return apiClient.delete(`/deploy/delete/${deploymentId}`)
   },
+
+  // 获取 GPU 状态
+  getGpuStatus: (): Promise<any> => {
+    return apiClient.get('/deploy/gpu-status')
+  },
 }
