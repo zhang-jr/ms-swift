@@ -195,17 +195,33 @@ async def get_deployment_status(deployment_id: str):
         raise HTTPException(status_code=500, detail=f"获取部署状态失败: {str(e)}")
 
 
-@router.get("/list", response_model=List[DeploymentStatus])
+@router.get("/list")
 async def list_deployments():
     """
-    列出所有部署
+    列出所有部署（返回格式适配前端）
 
     Returns:
-        list: 部署列表
+        dict: {"deployments": [...]}
     """
     try:
         deployments = deploy_service.list_deployments()
-        return [DeploymentStatus(**d) for d in deployments]
+
+        # 转换格式以匹配前端期望
+        formatted_deployments = []
+        for d in deployments:
+            formatted_deployments.append({
+                "deployment_id": d["deployment_id"],
+                "model_id": d["model_path"],  # 前端期望 model_id
+                "endpoint": d["api_endpoint"],  # 前端期望 endpoint
+                "status": d["status"],
+                "created_at": d.get("started_at", 0) * 1000,  # 转换为毫秒时间戳
+                "port": d["port"],
+                "base_url": d["base_url"],
+                "pid": d.get("pid"),
+                "uptime_seconds": d.get("uptime_seconds"),
+            })
+
+        return {"deployments": formatted_deployments}
 
     except Exception as e:
         logger.error(f"列出部署失败: {e}", exc_info=True)

@@ -28,6 +28,7 @@ class DeployService:
     def __init__(self):
         self.running_deployments: Dict[str, Dict[str, Any]] = {}
         self.base_port = 8000  # vllm 默认端口
+        self.monitor_tasks: Dict[str, asyncio.Task] = {}  # 后台监控任务
 
     def resolve_model_path(self, model_id: str) -> str:
         """
@@ -152,9 +153,9 @@ class DeployService:
         if port is not None:
             cmd.extend(["--port", str(port)])
 
-        # 添加 max_new_tokens（必需参数，否则使用默认值）
-        if max_model_len is not None and max_model_len > 0:
-            cmd.extend(["--max_new_tokens", str(max_model_len)])
+        # 添加 max_new_tokens（默认 2048，这是生成的最大 token 数）
+        max_new_tokens = kwargs.get("max_new_tokens", 2048)
+        cmd.extend(["--max_new_tokens", str(max_new_tokens)])
 
         # Adapter 路径（确保不是 None 或空字符串）
         if adapter_path and adapter_path.strip():
@@ -202,49 +203,7 @@ class DeployService:
             print(f"[ERROR] 详细堆栈:\n{traceback.format_exc()}")
             raise RuntimeError(f"无法启动部署进程: {str(e)}")
 
-        # 等待服务启动（检查健康状态）
-        max_retries = 300  # 最多等待 300 秒（5分钟，大模型加载需要更长时间）
-        health_url = f"http://localhost:{port}/health"
-
-        print(f"[DEBUG] 等待服务启动: {health_url}")
-        print(f"[DEBUG] 最大等待时间: {max_retries} 秒")
-
-        for i in range(max_retries):
-            try:
-                response = requests.get(health_url, timeout=1)
-                if response.status_code == 200:
-                    print(f"[DEBUG] ✓ 部署 {deployment_id} 启动成功（用时 {i+1} 秒）")
-                    break
-            except requests.RequestException as e:
-                # 每 10 秒打印一次进度
-                if (i + 1) % 10 == 0:
-                    print(f"[DEBUG] 等待中... {i+1}/{max_retries} 秒（进程状态: {'运行中' if process.poll() is None else '已退出'}）")
-
-            await asyncio.sleep(1)
-
-            # 检查进程是否异常退出
-            if process.poll() is not None:
-                print(f"[ERROR] 进程异常退出，退出码: {process.returncode}")
-                with open(log_file, "r") as f:
-                    logs = f.read()
-                raise RuntimeError(
-                    f"部署失败，进程异常退出（退出码: {process.returncode}）\n"
-                    f"日志文件: {log_file}\n"
-                    f"最后 100 行日志:\n{logs[-1000:]}"
-                )
-        else:
-            # 超时
-            print(f"[ERROR] 部署启动超时（{max_retries} 秒）")
-            process.kill()
-            with open(log_file, "r") as f:
-                logs = f.read()
-            raise TimeoutError(
-                f"部署启动超时（{max_retries}秒）\n"
-                f"日志文件: {log_file}\n"
-                f"最后 100 行日志:\n{logs[-1000:]}"
-            )
-
-        # 保存部署信息
+        # 立即保存部署信息（状态为 "starting"）
         deployment_info = {
             "deployment_id": deployment_id,
             "model_path": resolved_model_path,  # 保存解析后的路径
@@ -256,16 +215,149 @@ class DeployService:
             "log_file": str(log_file),
             "base_url": f"http://localhost:{port}",
             "api_endpoint": f"http://localhost:{port}/v1/chat/completions",
-            "status": "running",
+            "status": "starting",  # 初始状态为 starting
             "started_at": time.time(),
         }
 
         self.running_deployments[deployment_id] = deployment_info
 
+        # 启动后台监控任务（包含启动检查和持续监控）
+        monitor_task = asyncio.create_task(
+            self._monitor_deployment_with_startup(deployment_id, port)
+        )
+        self.monitor_tasks[deployment_id] = monitor_task
+        print(f"[DEBUG] ✓ 后台监控任务已启动: {deployment_id}")
+
         return {
             k: v for k, v in deployment_info.items()
             if k != "process"  # 不返回进程对象
         }
+
+    async def _monitor_deployment_with_startup(self, deployment_id: str, port: int):
+        """
+        后台监控部署（包含启动检查）
+
+        Args:
+            deployment_id: 部署 ID
+            port: 服务端口
+        """
+        print(f"[DEBUG][Monitor] 开始监控部署启动: {deployment_id}")
+
+        if deployment_id not in self.running_deployments:
+            print(f"[ERROR][Monitor] 部署 {deployment_id} 不存在")
+            return
+
+        deployment = self.running_deployments[deployment_id]
+        process = deployment["process"]
+        log_file = Path(deployment["log_file"])
+
+        # 1. 等待服务启动（最多 5 分钟）
+        max_startup_time = 300  # 5 分钟
+        health_url = f"http://localhost:{port}/health"
+
+        print(f"[DEBUG][Monitor] 等待服务启动: {health_url}")
+        print(f"[DEBUG][Monitor] 最大等待时间: {max_startup_time} 秒")
+
+        startup_success = False
+        for i in range(max_startup_time):
+            try:
+                response = requests.get(health_url, timeout=2)
+                if response.status_code == 200:
+                    print(f"[INFO][Monitor] ✓ 部署 {deployment_id} 启动成功（用时 {i+1} 秒）")
+                    deployment["status"] = "running"
+                    startup_success = True
+                    break
+            except requests.RequestException:
+                pass
+
+            # 每 10 秒打印一次进度
+            if (i + 1) % 10 == 0:
+                exit_code = process.poll()
+                if exit_code is not None:
+                    print(f"[ERROR][Monitor] 进程在启动时退出（退出码: {exit_code}）")
+                    deployment["status"] = "failed"
+                    deployment["exit_code"] = exit_code
+
+                    # 读取日志
+                    if log_file.exists():
+                        with open(log_file, "r") as f:
+                            logs = f.read()
+                        print(f"[ERROR][Monitor] 最后 200 字符日志:\n{logs[-200:]}")
+
+                    return
+                else:
+                    print(f"[DEBUG][Monitor] 等待中... {i+1}/{max_startup_time} 秒（进程运行中）")
+
+            await asyncio.sleep(1)
+
+        if not startup_success:
+            print(f"[ERROR][Monitor] 部署启动超时（{max_startup_time} 秒）")
+            deployment["status"] = "timeout"
+            # 杀死进程
+            try:
+                process.kill()
+                process.wait()
+            except:
+                pass
+            return
+
+        # 2. 持续监控服务状态（已启动成功）
+        print(f"[DEBUG][Monitor] 开始持续监控: {deployment_id}")
+        await self._monitor_deployment(deployment_id)
+
+    async def _monitor_deployment(self, deployment_id: str):
+        """
+        后台监控部署状态（持续运行，直到部署停止或失败）
+
+        Args:
+            deployment_id: 部署 ID
+        """
+        print(f"[DEBUG][Monitor] 开始监控部署: {deployment_id}")
+
+        while deployment_id in self.running_deployments:
+            try:
+                deployment = self.running_deployments[deployment_id]
+                process = deployment["process"]
+
+                # 1. 检查进程是否退出
+                exit_code = process.poll()
+                if exit_code is not None:
+                    print(f"[WARNING][Monitor] 部署 {deployment_id} 进程已退出（退出码: {exit_code}）")
+                    deployment["status"] = "failed"
+                    deployment["exit_code"] = exit_code
+                    deployment["stopped_at"] = time.time()
+                    break
+
+                # 2. 检查服务健康状态
+                try:
+                    health_url = f"{deployment['base_url']}/health"
+                    response = requests.get(health_url, timeout=2)
+
+                    if response.status_code == 200:
+                        # 服务健康
+                        if deployment["status"] != "running":
+                            print(f"[INFO][Monitor] 部署 {deployment_id} 恢复健康")
+                            deployment["status"] = "running"
+                    else:
+                        # 服务不健康
+                        print(f"[WARNING][Monitor] 部署 {deployment_id} 健康检查失败: {response.status_code}")
+                        deployment["status"] = "unhealthy"
+                except requests.RequestException as e:
+                    # 健康检查失败（可能是服务正在重启或负载过高）
+                    if deployment["status"] == "running":
+                        print(f"[WARNING][Monitor] 部署 {deployment_id} 健康检查异常: {e}")
+                        deployment["status"] = "unhealthy"
+
+                # 每 10 秒检查一次
+                await asyncio.sleep(10)
+
+            except Exception as e:
+                print(f"[ERROR][Monitor] 监控部署 {deployment_id} 出错: {e}")
+                import traceback
+                traceback.print_exc()
+                await asyncio.sleep(10)
+
+        print(f"[DEBUG][Monitor] 停止监控部署: {deployment_id}")
 
     def stop_deployment(self, deployment_id: str):
         """
@@ -282,7 +374,15 @@ class DeployService:
 
         print(f"[DEBUG] 停止部署: {deployment_id} (PID: {process.pid})")
 
-        # 优雅关闭
+        # 1. 取消监控任务
+        if deployment_id in self.monitor_tasks:
+            monitor_task = self.monitor_tasks[deployment_id]
+            if not monitor_task.done():
+                monitor_task.cancel()
+                print(f"[DEBUG] ✓ 已取消监控任务: {deployment_id}")
+            del self.monitor_tasks[deployment_id]
+
+        # 2. 优雅关闭进程
         try:
             # 发送 SIGTERM
             if hasattr(subprocess.os, 'killpg'):
@@ -312,12 +412,16 @@ class DeployService:
             except:
                 pass
 
+        # 3. 更新部署状态
+        deployment["status"] = "stopped"
+        deployment["stopped_at"] = time.time()
+
         # 从运行列表中删除
         del self.running_deployments[deployment_id]
 
     def get_deployment_status(self, deployment_id: str) -> Dict[str, Any]:
         """
-        获取部署状态
+        获取部署状态（由后台监控任务持续更新）
 
         Args:
             deployment_id: 部署 ID
@@ -332,35 +436,29 @@ class DeployService:
             }
 
         deployment = self.running_deployments[deployment_id]
-        process = deployment["process"]
 
-        # 检查进程状态
-        if process.poll() is None:
-            # 进程仍在运行，检查服务健康状态
-            try:
-                health_url = f"{deployment['base_url']}/health"
-                response = requests.get(health_url, timeout=2)
-                if response.status_code == 200:
-                    status = "running"
-                else:
-                    status = "unhealthy"
-            except:
-                status = "unhealthy"
-        else:
-            status = "stopped"
-            deployment["status"] = status
-
-        return {
+        # 状态由后台监控任务更新，直接返回当前状态
+        status_info = {
             "deployment_id": deployment_id,
             "model_path": deployment["model_path"],
             "served_model_name": deployment["served_model_name"],
             "port": deployment["port"],
             "base_url": deployment["base_url"],
             "api_endpoint": deployment["api_endpoint"],
-            "status": status,
+            "status": deployment.get("status", "unknown"),
             "pid": deployment["pid"],
             "uptime_seconds": time.time() - deployment["started_at"],
         }
+
+        # 如果有退出码，添加到状态信息
+        if "exit_code" in deployment:
+            status_info["exit_code"] = deployment["exit_code"]
+
+        # 如果已停止，添加停止时间
+        if "stopped_at" in deployment:
+            status_info["stopped_at"] = deployment["stopped_at"]
+
+        return status_info
 
     def list_deployments(self) -> list:
         """

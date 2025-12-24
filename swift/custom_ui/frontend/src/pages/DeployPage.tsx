@@ -41,6 +41,13 @@ const DeployPage = () => {
   useEffect(() => {
     loadModels()
     loadDeployments()
+
+    // 每 10 秒自动刷新部署列表（监控状态变化）
+    const interval = setInterval(() => {
+      loadDeployments()
+    }, 10000)
+
+    return () => clearInterval(interval)
   }, [])
 
   const loadModels = async () => {
@@ -147,12 +154,22 @@ const DeployPage = () => {
       key: 'status',
       render: (status: string) => {
         const colorMap: Record<string, string> = {
-          starting: 'blue',
-          running: 'green',
-          stopped: 'default',
-          failed: 'red',
+          starting: 'processing',  // 蓝色动画
+          running: 'success',      // 绿色
+          unhealthy: 'warning',    // 橙色
+          stopped: 'default',      // 灰色
+          failed: 'error',         // 红色
+          timeout: 'error',        // 红色
         }
-        return <Tag color={colorMap[status]}>{status}</Tag>
+        const textMap: Record<string, string> = {
+          starting: '启动中',
+          running: '运行中',
+          unhealthy: '不健康',
+          stopped: '已停止',
+          failed: '失败',
+          timeout: '超时',
+        }
+        return <Tag color={colorMap[status] || 'default'}>{textMap[status] || status}</Tag>
       },
     },
     {
