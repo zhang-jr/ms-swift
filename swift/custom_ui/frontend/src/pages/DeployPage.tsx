@@ -17,7 +17,6 @@ import {
   Col,
   Checkbox,
   AutoComplete,
-  Tooltip,
 } from 'antd'
 import {
   RocketOutlined,
@@ -222,9 +221,13 @@ const DeployPage = () => {
               >
                 <AutoComplete
                   placeholder="选择模型或输入本地路径"
-                  filterOption={(input, option) =>
-                    (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-                  }
+                  filterOption={(input, option) => {
+                    const searchText = input.toLowerCase()
+                    return (
+                      (option?.value as string)?.toLowerCase().includes(searchText) ||
+                      false
+                    )
+                  }}
                   options={models.map((m) => {
                     // 为不同类型的模型添加图标和颜色
                     const typeTag = m.model_type === 'adapter'

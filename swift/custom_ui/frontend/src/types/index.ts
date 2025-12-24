@@ -125,6 +125,7 @@ export interface ModelInfo {
   size?: string
   description?: string
   tags: string[]
+  source?: string  // 模型来源：local 或 output
 }
 
 export interface DatasetInfo {
