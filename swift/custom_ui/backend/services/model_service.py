@@ -71,48 +71,83 @@ class ModelService:
         """
         扫描训练输出目录 (/app/output)
 
+        目录结构：
+        /app/output/
+        └── {task_id}/                    # 训练任务 ID
+            └── {version}/                # 训练版本/时间戳
+                ├── checkpoint-1/         # 检查点（包含 adapter）
+                │   ├── adapter_config.json
+                │   ├── adapter_model.safetensors
+                │   └── ...
+                ├── checkpoint-2/
+                └── (可能有最终合并模型)
+
         Returns:
             list: 训练输出的模型列表（adapter + merged 完整模型）
         """
         models = []
+        scanned_paths = set()  # 避免重复扫描
 
         if not OUTPUT_DIR.exists():
             logger.warning(f"训练输出目录不存在: {OUTPUT_DIR}")
             return models
 
         try:
-            # 扫描 /app/output 下的所有训练任务目录
-            for task_dir in OUTPUT_DIR.iterdir():
-                if not task_dir.is_dir():
+            # 方法 1: 递归查找所有包含 adapter_config.json 的目录（Adapter 模型）
+            for adapter_config_file in OUTPUT_DIR.rglob("adapter_config.json"):
+                model_dir = adapter_config_file.parent
+
+                # 避免重复扫描
+                if str(model_dir) in scanned_paths:
                     continue
+                scanned_paths.add(str(model_dir))
 
                 # 检查是否包含 adapter 模型文件
-                has_adapter_config = (task_dir / "adapter_config.json").exists()
-                has_adapter_model = (task_dir / "adapter_model.safetensors").exists() or (task_dir / "adapter_model.bin").exists()
+                has_adapter_model = (model_dir / "adapter_model.safetensors").exists() or (model_dir / "adapter_model.bin").exists()
 
-                # 检查是否包含完整模型文件（merged）
-                has_model_config = (task_dir / "config.json").exists()
-                has_model_weights = any(task_dir.glob("*.safetensors")) or any(task_dir.glob("*.bin"))
+                if has_adapter_model:
+                    # 生成友好的显示名称（去掉 /app/output/ 前缀）
+                    relative_path = model_dir.relative_to(OUTPUT_DIR)
+                    display_name = str(relative_path).replace("\\", "/")
 
-                # Adapter 模型
-                if has_adapter_config or has_adapter_model:
                     models.append({
-                        "model_id": str(task_dir),  # 完整路径
-                        "model_name": task_dir.name,
+                        "model_id": str(model_dir),  # 完整路径
+                        "model_name": display_name,
                         "model_type": "adapter",
-                        "size": self._get_dir_size(task_dir),
-                        "description": f"训练输出 (Adapter): {task_dir.name}",
+                        "size": self._get_dir_size(model_dir),
+                        "description": f"训练输出 (Adapter): {display_name}",
                         "tags": ["trained", "adapter", "lora"],
                         "source": "output"
                     })
-                # 完整模型（Merged）
-                elif has_model_config and has_model_weights:
+
+            # 方法 2: 递归查找所有包含 config.json 的目录（完整模型）
+            # 但排除已扫描的 adapter 目录
+            for config_file in OUTPUT_DIR.rglob("config.json"):
+                model_dir = config_file.parent
+
+                # 避免重复扫描
+                if str(model_dir) in scanned_paths:
+                    continue
+
+                # 检查是否包含模型权重文件
+                has_model_weights = any(model_dir.glob("*.safetensors")) or any(model_dir.glob("*.bin"))
+
+                # 确保不是 adapter 目录（adapter 目录也有 config.json）
+                is_adapter = (model_dir / "adapter_config.json").exists()
+
+                if has_model_weights and not is_adapter:
+                    scanned_paths.add(str(model_dir))
+
+                    # 生成友好的显示名称
+                    relative_path = model_dir.relative_to(OUTPUT_DIR)
+                    display_name = str(relative_path).replace("\\", "/")
+
                     models.append({
-                        "model_id": str(task_dir),  # 完整路径
-                        "model_name": task_dir.name,
+                        "model_id": str(model_dir),  # 完整路径
+                        "model_name": display_name,
                         "model_type": "base_model",
-                        "size": self._get_dir_size(task_dir),
-                        "description": f"训练输出 (Merged): {task_dir.name}",
+                        "size": self._get_dir_size(model_dir),
+                        "description": f"训练输出 (Merged): {display_name}",
                         "tags": ["trained", "merged", "full_model"],
                         "source": "output"
                     })
