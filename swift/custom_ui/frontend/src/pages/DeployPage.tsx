@@ -153,17 +153,30 @@ const DeployPage = () => {
       title: '部署 ID',
       dataIndex: 'deployment_id',
       key: 'deployment_id',
+      width: 100,
       render: (text: string) => <Text code>{text.substring(0, 8)}</Text>,
     },
     {
       title: '模型',
       dataIndex: 'model_id',
       key: 'model_id',
+      ellipsis: true,
+      render: (text: string) => {
+        // 只显示模型名称，去掉路径前缀
+        const modelName = text.split('/').pop() || text
+        return (
+          <Text ellipsis={{ tooltip: text }} style={{ maxWidth: 200 }}>
+            {modelName}
+          </Text>
+        )
+      },
     },
     {
       title: 'GPU',
       dataIndex: 'gpu_id',
       key: 'gpu_id',
+      width: 80,
+      align: 'center' as const,
       render: (gpu_id: string) => (
         <Tag color="cyan">GPU {gpu_id}</Tag>
       ),
@@ -172,12 +185,16 @@ const DeployPage = () => {
       title: '端口',
       dataIndex: 'port',
       key: 'port',
+      width: 80,
+      align: 'center' as const,
       render: (port: number) => <Text code>{port}</Text>,
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
+      width: 100,
+      align: 'center' as const,
       render: (status: string) => {
         const colorMap: Record<string, string> = {
           starting: 'processing',  // 蓝色动画
@@ -199,31 +216,28 @@ const DeployPage = () => {
       },
     },
     {
-      title: '端点地址',
-      dataIndex: 'endpoint',
-      key: 'endpoint',
-      render: (text: string) => (
-        <Space>
-          <Text code style={{ fontSize: '12px' }}>{text}</Text>
-          <Button
-            size="small"
-            icon={<CopyOutlined />}
-            onClick={() => handleCopyEndpoint(text)}
-          />
-        </Space>
-      ),
-    },
-    {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (text: string) => new Date(text).toLocaleString('zh-CN'),
+      width: 160,
+      render: (text: string) => {
+        const date = new Date(text)
+        // 格式：12-24 19:50
+        return date.toLocaleString('zh-CN', {
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      },
     },
     {
       title: '操作',
       key: 'action',
+      width: 200,
+      fixed: 'right' as const,
       render: (_: any, record: any) => (
-        <Space>
+        <Space size="small">
           {record.status === 'running' ? (
             <>
               <Button
@@ -231,7 +245,7 @@ const DeployPage = () => {
                 icon={<CodeOutlined />}
                 onClick={() => handleShowExample(record)}
               >
-                使用示例
+                示例
               </Button>
               <Button
                 size="small"
@@ -322,7 +336,7 @@ const DeployPage = () => {
       )}
 
       <Row gutter={24}>
-        <Col xs={24} lg={12}>
+        <Col xs={24} lg={10}>
           <Card title="部署配置" bordered={false}>
             <Form
               form={form}
@@ -453,14 +467,15 @@ const DeployPage = () => {
           </Card>
         </Col>
 
-        <Col xs={24} lg={12}>
+        <Col xs={24} lg={14}>
           <Card title="部署列表" bordered={false}>
             <Table
               dataSource={deployments}
               columns={columns}
               rowKey="deployment_id"
-              pagination={false}
+              pagination={{ pageSize: 10, size: 'small' }}
               size="small"
+              scroll={{ x: 'max-content' }}
             />
           </Card>
 
