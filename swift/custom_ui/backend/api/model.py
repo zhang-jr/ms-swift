@@ -13,6 +13,7 @@ router = APIRouter()
 
 # 从环境变量获取目录路径
 MODEL_DIR = Path(os.getenv("MODEL_DIR", "/app/models"))
+OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/app/output"))
 DATA_DIR = Path(os.getenv("DATA_DIR", "/app/data"))
 
 # 响应模型
@@ -107,12 +108,13 @@ def scan_models() -> List[Dict[str, Any]]:
                         logger.info(f"[scan_models] 找到有效模型: {model_id} (名称: {model_name})")
 
                         models.append({
-                            "model_id": model_id,  # 使用相对路径作为 ID（如 Qwen/Qwen2.5-0.6B-Instruct）
+                            "model_id": str(item),  # 使用绝对路径作为 ID
                             "model_name": model_name,
                             "model_type": model_type,
                             "size": size,
                             "description": f"本地模型: {model_id}",
-                            "tags": ["local"]
+                            "tags": ["local"],
+                            "source": "local"
                         })
                     except Exception as e:
                         logger.error(f"[scan_models] 处理模型失败: {item}, 错误: {e}")
@@ -128,6 +130,134 @@ def scan_models() -> List[Dict[str, Any]]:
     scan_directory(MODEL_DIR)
 
     logger.info(f"[scan_models] 扫描完成，共找到 {len(models)} 个模型")
+    return models
+
+
+# 辅助函数：扫描训练输出模型目录
+def scan_trained_models() -> List[Dict[str, Any]]:
+    """
+    扫描 OUTPUT_DIR 目录，返回训练输出的模型列表
+
+    目录结构示例：
+    /app/output/
+        └── {task_id}/                    # 训练任务 ID
+            └── {version}/                # 训练版本/时间戳
+                ├── checkpoint-1/         # 检查点（包含 adapter）
+                │   ├── adapter_config.json
+                │   ├── adapter_model.safetensors
+                │   └── ...
+                ├── checkpoint-2/
+                └── (可能有最终合并模型)
+
+    Returns:
+        List[Dict]: 训练输出的模型列表
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+
+    models = []
+    scanned_paths = set()  # 避免重复扫描
+
+    logger.info(f"[scan_trained_models] 扫描目录: {OUTPUT_DIR}")
+    logger.info(f"[scan_trained_models] 目录是否存在: {OUTPUT_DIR.exists()}")
+
+    if not OUTPUT_DIR.exists():
+        logger.warning(f"[scan_trained_models] 目录不存在: {OUTPUT_DIR}")
+        return models
+
+    try:
+        # 递归查找所有包含 adapter_config.json 的目录（Adapter 模型）
+        for adapter_config_file in OUTPUT_DIR.rglob("adapter_config.json"):
+            model_dir = adapter_config_file.parent
+
+            # 避免重复扫描
+            if str(model_dir) in scanned_paths:
+                continue
+            scanned_paths.add(str(model_dir))
+
+            # 检查是否包含 adapter 模型文件
+            has_adapter_model = (model_dir / "adapter_model.safetensors").exists() or (model_dir / "adapter_model.bin").exists()
+
+            if has_adapter_model:
+                # 生成友好的显示名称（去掉 /app/output/ 前缀）
+                relative_path = model_dir.relative_to(OUTPUT_DIR)
+                display_name = str(relative_path).replace("\\", "/")
+
+                # 计算模型大小
+                try:
+                    total_size = sum(f.stat().st_size for f in model_dir.rglob('*') if f.is_file())
+                    size_mb = total_size / (1024 ** 2)
+                    if size_mb >= 1024:
+                        size = f"{size_mb / 1024:.1f}GB"
+                    else:
+                        size = f"{size_mb:.0f}MB"
+                except Exception as e:
+                    logger.warning(f"[scan_trained_models] 计算大小失败: {model_dir}, 错误: {e}")
+                    size = None
+
+                logger.info(f"[scan_trained_models] 找到 Adapter 模型: {display_name}")
+
+                models.append({
+                    "model_id": str(model_dir),  # 绝对路径
+                    "model_name": model_dir.name,  # checkpoint-1, checkpoint-2 等
+                    "model_type": "adapter",
+                    "size": size,
+                    "description": f"训练输出 (Adapter): {display_name}",
+                    "tags": ["trained", "adapter", "lora"],
+                    "source": "output"
+                })
+
+        # 递归查找所有包含 config.json 的目录（完整模型）
+        # 但排除已扫描的 adapter 目录
+        for config_file in OUTPUT_DIR.rglob("config.json"):
+            model_dir = config_file.parent
+
+            # 避免重复扫描
+            if str(model_dir) in scanned_paths:
+                continue
+
+            # 检查是否包含模型权重文件
+            has_model_weights = any(model_dir.glob("*.safetensors")) or any(model_dir.glob("*.bin"))
+
+            # 确保不是 adapter 目录（adapter 目录也有 config.json）
+            is_adapter = (model_dir / "adapter_config.json").exists()
+
+            if has_model_weights and not is_adapter:
+                scanned_paths.add(str(model_dir))
+
+                # 生成友好的显示名称
+                relative_path = model_dir.relative_to(OUTPUT_DIR)
+                display_name = str(relative_path).replace("\\", "/")
+
+                # 计算模型大小
+                try:
+                    total_size = sum(f.stat().st_size for f in model_dir.rglob('*') if f.is_file())
+                    size_gb = total_size / (1024 ** 3)
+                    if size_gb >= 1:
+                        size = f"{size_gb:.1f}GB"
+                    else:
+                        size = f"{total_size / (1024 ** 2):.0f}MB"
+                except Exception as e:
+                    logger.warning(f"[scan_trained_models] 计算大小失败: {model_dir}, 错误: {e}")
+                    size = None
+
+                logger.info(f"[scan_trained_models] 找到完整模型: {display_name}")
+
+                models.append({
+                    "model_id": str(model_dir),  # 绝对路径
+                    "model_name": model_dir.name,
+                    "model_type": "base_model",
+                    "size": size,
+                    "description": f"训练输出 (Merged): {display_name}",
+                    "tags": ["trained", "merged", "full_model"],
+                    "source": "output"
+                })
+
+        logger.info(f"[scan_trained_models] 扫描完成，共找到 {len(models)} 个训练输出模型")
+
+    except Exception as e:
+        logger.error(f"[scan_trained_models] 扫描失败: {e}", exc_info=True)
+
     return models
 
 
@@ -260,6 +390,39 @@ async def get_models(
     """
     # 从实际目录扫描模型
     models = scan_models()
+
+    # 应用过滤
+    if search:
+        models = [m for m in models if search.lower() in m["model_name"].lower()
+                  or search.lower() in m["model_id"].lower()]
+
+    if model_type:
+        models = [m for m in models if m["model_type"] == model_type]
+
+    if tag:
+        models = [m for m in models if tag in m["tags"]]
+
+    return [ModelInfo(**m) for m in models]
+
+@router.get("/trained-models", response_model=List[ModelInfo])
+async def get_trained_models(
+    search: Optional[str] = None,
+    model_type: Optional[str] = None,
+    tag: Optional[str] = None
+):
+    """
+    获取训练输出模型列表（从 /app/output 目录扫描）
+
+    Args:
+        search: 搜索关键词
+        model_type: 模型类型过滤（adapter, base_model）
+        tag: 标签过滤
+
+    Returns:
+        List[ModelInfo]: 训练输出模型列表
+    """
+    # 从实际目录扫描训练输出模型
+    models = scan_trained_models()
 
     # 应用过滤
     if search:

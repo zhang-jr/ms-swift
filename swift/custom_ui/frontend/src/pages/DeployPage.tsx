@@ -16,7 +16,7 @@ import {
   Row,
   Col,
   Checkbox,
-  AutoComplete,
+  Radio,
 } from 'antd'
 import {
   RocketOutlined,
@@ -37,13 +37,16 @@ const DeployPage = () => {
   const [form] = Form.useForm()
   const [loading, setLoading] = useState(false)
   const [deployments, setDeployments] = useState<any[]>([])
-  const [models, setModels] = useState<ModelInfo[]>([])
+  const [baseModels, setBaseModels] = useState<ModelInfo[]>([])
+  const [trainedModels, setTrainedModels] = useState<ModelInfo[]>([])
+  const [modelSource, setModelSource] = useState<'base' | 'trained'>('base')
   const [gpuStatus, setGpuStatus] = useState<any>(null)
   const [exampleModalVisible, setExampleModalVisible] = useState(false)
   const [selectedDeployment, setSelectedDeployment] = useState<any>(null)
 
   useEffect(() => {
-    loadModels()
+    loadBaseModels()
+    loadTrainedModels()
     loadDeployments()
     loadGpuStatus()
 
@@ -56,13 +59,23 @@ const DeployPage = () => {
     return () => clearInterval(interval)
   }, [])
 
-  const loadModels = async () => {
+  const loadBaseModels = async () => {
     try {
       const data = await modelAPI.getModels()
-      console.log('[DeployPage] 加载的模型列表:', data)
-      setModels(data)
+      console.log('[DeployPage] 加载的基础模型列表:', data)
+      setBaseModels(data)
     } catch (error) {
-      message.error('加载模型列表失败')
+      message.error('加载基础模型列表失败')
+    }
+  }
+
+  const loadTrainedModels = async () => {
+    try {
+      const data = await modelAPI.getTrainedModels()
+      console.log('[DeployPage] 加载的训练输出模型列表:', data)
+      setTrainedModels(data)
+    } catch (error) {
+      message.error('加载训练输出模型列表失败')
     }
   }
 
@@ -346,50 +359,82 @@ const DeployPage = () => {
                 gpu_memory_utilization: 0.9,
               }}
             >
+              <Form.Item label="模型来源">
+                <Radio.Group
+                  value={modelSource}
+                  onChange={(e) => {
+                    setModelSource(e.target.value)
+                    // 切换来源时清空已选择的模型
+                    form.setFieldsValue({ model_id_or_path: undefined })
+                  }}
+                  buttonStyle="solid"
+                >
+                  <Radio.Button value="base">
+                    <CloudServerOutlined /> 基础模型 (/app/models)
+                  </Radio.Button>
+                  <Radio.Button value="trained">
+                    <RocketOutlined /> 训练输出 (/app/output)
+                  </Radio.Button>
+                </Radio.Group>
+              </Form.Item>
+
               <Form.Item
                 label="模型"
                 name="model_id_or_path"
-                rules={[{ required: true, message: '请选择或输入模型路径' }]}
-                tooltip="选择本地模型或输入完整路径（如 /app/models/Qwen/Qwen2.5-7B-Instruct）"
+                rules={[{ required: true, message: '请选择模型' }]}
+                tooltip={
+                  modelSource === 'base'
+                    ? '从 /app/models 目录选择预训练模型'
+                    : '从 /app/output 目录选择训练输出的模型（checkpoint）'
+                }
               >
-                <AutoComplete
-                  placeholder="选择模型或输入本地路径"
+                <Select
+                  placeholder={
+                    modelSource === 'base'
+                      ? '选择基础模型'
+                      : '选择训练输出模型'
+                  }
+                  showSearch
                   filterOption={(input, option) => {
                     const searchText = input.toLowerCase()
                     return (
+                      (option?.label as string)?.toLowerCase().includes(searchText) ||
                       (option?.value as string)?.toLowerCase().includes(searchText) ||
                       false
                     )
                   }}
-                  options={models.map((m) => {
-                    // 为不同类型的模型添加图标和颜色
-                    const typeTag = m.model_type === 'adapter'
-                      ? <Tag color="blue">Adapter</Tag>
-                      : <Tag color="green">Base</Tag>
-
-                    const sourceTag = m.source === 'output'
-                      ? <Tag color="orange">训练输出</Tag>
-                      : <Tag color="cyan">本地</Tag>
-
-                    return {
+                  options={
+                    (modelSource === 'base' ? baseModels : trainedModels).map((m) => ({
                       label: (
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <div>
-                            <div>{m.model_name}</div>
-                            <div style={{ fontSize: '12px', color: '#888' }}>
+                          <div style={{ flex: 1, overflow: 'hidden' }}>
+                            <div style={{ fontWeight: 500 }}>{m.model_name}</div>
+                            <div
+                              style={{
+                                fontSize: '12px',
+                                color: '#888',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                              }}
+                              title={m.model_id}
+                            >
                               {m.model_id}
                             </div>
                           </div>
                           <Space>
-                            {typeTag}
-                            {sourceTag}
-                            <Tag>{m.size}</Tag>
+                            {m.model_type === 'adapter' ? (
+                              <Tag color="blue">Adapter</Tag>
+                            ) : (
+                              <Tag color="green">Base</Tag>
+                            )}
+                            {m.size && <Tag>{m.size}</Tag>}
                           </Space>
                         </div>
                       ),
                       value: m.model_id,
-                    }
-                  })}
+                    }))
+                  }
                 />
               </Form.Item>
 

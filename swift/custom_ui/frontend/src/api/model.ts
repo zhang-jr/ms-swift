@@ -2,9 +2,14 @@ import { apiClient } from './client'
 import type { ModelInfo, DatasetInfo } from '@/types'
 
 export const modelAPI = {
-  // 获取模型列表
+  // 获取基础模型列表（/app/models）
   getModels: (params?: { search?: string; model_type?: string; tag?: string }): Promise<ModelInfo[]> => {
     return apiClient.get('/model/models', { params })
+  },
+
+  // 获取训练输出模型列表（/app/output）
+  getTrainedModels: (params?: { search?: string; model_type?: string; tag?: string }): Promise<ModelInfo[]> => {
+    return apiClient.get('/model/trained-models', { params })
   },
 
   // 获取模型详情
