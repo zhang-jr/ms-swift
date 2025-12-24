@@ -72,7 +72,7 @@ class ModelService:
         扫描训练输出目录 (/app/output)
 
         Returns:
-            list: 训练输出的 adapter 模型列表
+            list: 训练输出的模型列表（adapter + merged 完整模型）
         """
         models = []
 
@@ -90,14 +90,30 @@ class ModelService:
                 has_adapter_config = (task_dir / "adapter_config.json").exists()
                 has_adapter_model = (task_dir / "adapter_model.safetensors").exists() or (task_dir / "adapter_model.bin").exists()
 
+                # 检查是否包含完整模型文件（merged）
+                has_model_config = (task_dir / "config.json").exists()
+                has_model_weights = any(task_dir.glob("*.safetensors")) or any(task_dir.glob("*.bin"))
+
+                # Adapter 模型
                 if has_adapter_config or has_adapter_model:
                     models.append({
                         "model_id": str(task_dir),  # 完整路径
                         "model_name": task_dir.name,
                         "model_type": "adapter",
                         "size": self._get_dir_size(task_dir),
-                        "description": f"训练输出: {task_dir.name}",
+                        "description": f"训练输出 (Adapter): {task_dir.name}",
                         "tags": ["trained", "adapter", "lora"],
+                        "source": "output"
+                    })
+                # 完整模型（Merged）
+                elif has_model_config and has_model_weights:
+                    models.append({
+                        "model_id": str(task_dir),  # 完整路径
+                        "model_name": task_dir.name,
+                        "model_type": "base_model",
+                        "size": self._get_dir_size(task_dir),
+                        "description": f"训练输出 (Merged): {task_dir.name}",
+                        "tags": ["trained", "merged", "full_model"],
                         "source": "output"
                     })
 

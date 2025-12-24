@@ -25,6 +25,7 @@ import {
   DeleteOutlined,
   CloudServerOutlined,
   CopyOutlined,
+  CodeOutlined,
 } from '@ant-design/icons'
 import { deployAPI } from '@/api/deploy'
 import { modelAPI } from '@/api/model'
@@ -38,6 +39,8 @@ const DeployPage = () => {
   const [deployments, setDeployments] = useState<any[]>([])
   const [models, setModels] = useState<ModelInfo[]>([])
   const [gpuStatus, setGpuStatus] = useState<any>(null)
+  const [exampleModalVisible, setExampleModalVisible] = useState(false)
+  const [selectedDeployment, setSelectedDeployment] = useState<any>(null)
 
   useEffect(() => {
     loadModels()
@@ -133,6 +136,18 @@ const DeployPage = () => {
     message.success('端点地址已复制')
   }
 
+  // 显示使用示例
+  const handleShowExample = (deployment: any) => {
+    setSelectedDeployment(deployment)
+    setExampleModalVisible(true)
+  }
+
+  // 复制示例代码
+  const handleCopyExample = (code: string) => {
+    navigator.clipboard.writeText(code)
+    message.success('示例代码已复制')
+  }
+
   const columns = [
     {
       title: '部署 ID',
@@ -210,14 +225,23 @@ const DeployPage = () => {
       render: (_: any, record: any) => (
         <Space>
           {record.status === 'running' ? (
-            <Button
-              size="small"
-              danger
-              icon={<StopOutlined />}
-              onClick={() => handleStopDeployment(record.deployment_id)}
-            >
-              停止
-            </Button>
+            <>
+              <Button
+                size="small"
+                icon={<CodeOutlined />}
+                onClick={() => handleShowExample(record)}
+              >
+                使用示例
+              </Button>
+              <Button
+                size="small"
+                danger
+                icon={<StopOutlined />}
+                onClick={() => handleStopDeployment(record.deployment_id)}
+              >
+                停止
+              </Button>
+            </>
           ) : null}
           {record.status !== 'running' ? (
             <Button
@@ -440,34 +464,155 @@ const DeployPage = () => {
             />
           </Card>
 
-          <Card title="使用示例" bordered={false} style={{ marginTop: 24 }}>
-            <Paragraph>
-              <Text strong>OpenAI 兼容接口:</Text>
-            </Paragraph>
-            <pre style={{
-              background: '#1f1f1f',
-              color: '#d4d4d4',  // 可见的灰色文字
-              padding: '12px',
-              borderRadius: '4px',
-              overflow: 'auto'
-            }}>
-{`import openai
-client = openai.OpenAI(
-    api_key="EMPTY",
-    base_url="http://localhost:8080/v1",
-)
-
-response = client.chat.completions.create(
-    model="default",
-    messages=[
-        {"role": "user", "content": "你好"}
-    ]
-)
-print(response.choices[0].message.content)`}
-            </pre>
-          </Card>
         </Col>
       </Row>
+
+      {/* 使用示例 Modal */}
+      <Modal
+        title="使用示例 - OpenAI 兼容接口"
+        open={exampleModalVisible}
+        onCancel={() => setExampleModalVisible(false)}
+        width={800}
+        footer={null}
+      >
+        {selectedDeployment && (
+          <div>
+            <Paragraph type="secondary">
+              部署 ID: <Text code>{selectedDeployment.deployment_id}</Text>
+              <br />
+              模型: <Text strong>{selectedDeployment.model_id}</Text>
+              <br />
+              端点: <Text code>{selectedDeployment.endpoint}</Text>
+            </Paragraph>
+
+            <Divider />
+
+            {/* Python 示例 */}
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <Text strong style={{ fontSize: 16 }}>Python (OpenAI SDK)</Text>
+                <Button
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() => handleCopyExample(
+`from openai import OpenAI
+
+# 创建客户端
+client = OpenAI(
+    api_key="EMPTY",  # vLLM 不需要 API key
+    base_url="${selectedDeployment.base_url}/v1",
+)
+
+# 发送对话请求
+response = client.chat.completions.create(
+    model="${selectedDeployment.model_id.split('/').pop()}",
+    messages=[
+        {"role": "system", "content": "你是一个有用的助手。"},
+        {"role": "user", "content": "你好，请介绍一下自己。"}
+    ],
+    temperature=0.7,
+    max_tokens=2048,
+)
+
+print(response.choices[0].message.content)`
+                  )}
+                >
+                  复制
+                </Button>
+              </div>
+              <pre style={{
+                background: '#1f1f1f',
+                color: '#d4d4d4',
+                padding: '16px',
+                borderRadius: '6px',
+                overflow: 'auto',
+                fontSize: '13px',
+                lineHeight: '1.6'
+              }}>
+{`from openai import OpenAI
+
+# 创建客户端
+client = OpenAI(
+    api_key="EMPTY",  # vLLM 不需要 API key
+    base_url="${selectedDeployment.base_url}/v1",
+)
+
+# 发送对话请求
+response = client.chat.completions.create(
+    model="${selectedDeployment.model_id.split('/').pop()}",
+    messages=[
+        {"role": "system", "content": "你是一个有用的助手。"},
+        {"role": "user", "content": "你好，请介绍一下自己。"}
+    ],
+    temperature=0.7,
+    max_tokens=2048,
+)
+
+print(response.choices[0].message.content)`}
+              </pre>
+            </div>
+
+            {/* curl 示例 */}
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <Text strong style={{ fontSize: 16 }}>curl</Text>
+                <Button
+                  size="small"
+                  icon={<CopyOutlined />}
+                  onClick={() => handleCopyExample(
+`curl ${selectedDeployment.endpoint} \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${selectedDeployment.model_id.split('/').pop()}",
+    "messages": [
+      {"role": "system", "content": "你是一个有用的助手。"},
+      {"role": "user", "content": "你好，请介绍一下自己。"}
+    ],
+    "temperature": 0.7,
+    "max_tokens": 2048
+  }'`
+                  )}
+                >
+                  复制
+                </Button>
+              </div>
+              <pre style={{
+                background: '#1f1f1f',
+                color: '#d4d4d4',
+                padding: '16px',
+                borderRadius: '6px',
+                overflow: 'auto',
+                fontSize: '13px',
+                lineHeight: '1.6'
+              }}>
+{`curl ${selectedDeployment.endpoint} \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "model": "${selectedDeployment.model_id.split('/').pop()}",
+    "messages": [
+      {"role": "system", "content": "你是一个有用的助手。"},
+      {"role": "user", "content": "你好，请介绍一下自己。"}
+    ],
+    "temperature": 0.7,
+    "max_tokens": 2048
+  }'`}
+              </pre>
+            </div>
+
+            <Divider />
+
+            <Paragraph type="secondary" style={{ marginBottom: 0 }}>
+              <Text strong>注意事项:</Text>
+              <ul style={{ marginTop: 8, paddingLeft: 20 }}>
+                <li>部署服务使用 OpenAI 兼容接口，可直接使用 OpenAI SDK</li>
+                <li>模型名称 (model) 应为部署时指定的 served_model_name</li>
+                <li>vLLM 不需要 API key，可设置为 "EMPTY"</li>
+                <li>支持流式输出，设置 <Text code>stream=True</Text></li>
+              </ul>
+            </Paragraph>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }
