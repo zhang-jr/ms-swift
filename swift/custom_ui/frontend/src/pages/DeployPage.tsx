@@ -397,8 +397,8 @@ const DeployPage = () => {
                   showSearch
                   filterOption={(input, option) => {
                     const searchText = input.toLowerCase()
+                    // 只搜索 value（绝对路径），因为 label 是 JSX Element
                     return (
-                      (option?.label as string)?.toLowerCase().includes(searchText) ||
                       (option?.value as string)?.toLowerCase().includes(searchText) ||
                       false
                     )
