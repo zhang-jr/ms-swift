@@ -425,7 +425,9 @@ const DeployPage = () => {
                   }
                   optionRender={(option) => {
                     // 下拉列表中的自定义渲染
-                    const m = (option.data as { model: ModelInfo }).model
+                    const modelData = option?.data as { model?: ModelInfo } | undefined
+                    if (!modelData?.model) return null
+                    const m = modelData.model
                     return (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ flex: 1, overflow: 'hidden' }}>
