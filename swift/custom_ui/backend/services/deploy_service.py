@@ -1,6 +1,6 @@
 """
-部署服务 - 使用 vllm 作为推理后端
-通过 swift deploy 命令启动 OpenAI 兼容的推理服务器
+部署服务 - 使用 vllm serve 直接启动推理后端
+通过 vllm serve 命令启动 OpenAI 兼容的推理服务器
 """
 import subprocess
 import asyncio
@@ -204,27 +204,31 @@ class DeployService:
         port: Optional[int] = None,
         gpu_devices: Optional[str] = None,  # 改为可选，None 表示自动分配
         max_model_len: Optional[int] = None,
-        use_vllm: bool = True,
         gpu_memory_utilization: Optional[float] = 0.9,
-        quantization_bit: Optional[int] = None,
+        tensor_parallel_size: Optional[int] = None,
+        quantization: Optional[str] = None,
+        dtype: str = "auto",
+        trust_remote_code: bool = False,
         **kwargs
     ) -> Dict[str, Any]:
         """
-        启动部署服务 (使用 vllm 后端)
+        启动部署服务 (使用 vllm serve)
 
         Args:
             deployment_id: 部署 ID
-            model_path: 模型路径（本地路径或 HuggingFace 模型名称）
+            model_path: 模型路径（本地路径）
             adapter_path: Adapter 路径（可选，如 LoRA adapter）
-            served_model_name: 服务模型名称（用于 OpenAI API）
+            served_model_name: 服务模型名称（用于 OpenAI API，可多个）
             host: 服务 Host（默认 0.0.0.0）
-            port: 服务端口（默认自动分配）
+            port: 服务端口（默认自动分配，默认 8000）
             gpu_devices: GPU 设备 ID（可选，None=自动分配，"0"=指定 GPU 0）
-            max_model_len: 最大模型长度（可选）
-            use_vllm: 是否使用 vLLM 后端（默认 True）
+            max_model_len: 最大模型长度/上下文长度（可选）
             gpu_memory_utilization: GPU 内存利用率（默认 0.9）
-            quantization_bit: 量化位数（可选）
-            **kwargs: 其他参数
+            tensor_parallel_size: 张量并行大小（可选，多卡推理）
+            quantization: 量化方法（如 awq, gptq, sqeeze_llm 等）
+            dtype: 数据类型（auto, half, float16, bfloat16, float, float32）
+            trust_remote_code: 是否信任远程代码（默认 False）
+            **kwargs: 其他 vllm serve 参数
 
         Returns:
             dict: 部署信息
@@ -232,8 +236,9 @@ class DeployService:
         # 参数验证
         print(f"[DEBUG] 开始部署验证 - deployment_id: {deployment_id}")
         print(f"[DEBUG] 参数检查 - model_path: {model_path}, adapter_path: {adapter_path}")
-        print(f"[DEBUG] 参数检查 - use_vllm: {use_vllm}, port: {port}, max_model_len: {max_model_len}")
+        print(f"[DEBUG] 参数检查 - port: {port}, max_model_len: {max_model_len}")
         print(f"[DEBUG] 参数检查 - gpu_devices: {gpu_devices} (None=自动分配)")
+        print(f"[DEBUG] 参数检查 - gpu_memory_utilization: {gpu_memory_utilization}")
 
         if deployment_id in self.running_deployments:
             raise ValueError(f"部署 {deployment_id} 已存在")
@@ -282,34 +287,62 @@ class DeployService:
             served_model_name = Path(model_path).name
             print(f"[DEBUG] 自动生成 served_model_name: {served_model_name}")
 
-        # 构建 swift deploy 命令（参考官方文档和源代码）
-        # 参考：DeployArguments 类接受的参数
-        # 官方示例：swift deploy --model MODEL --infer_backend vllm --max_new_tokens 2048 --served_model_name NAME
+        # 构建 vllm serve 命令
+        # 参考：https://docs.vllm.ai/en/latest/configuration/serve_args.html
+        # 格式：vllm serve <model_tag> [options]
         cmd = [
-            "swift", "deploy",
-            "--model", resolved_model_path,  # 使用解析后的路径
-            "--infer_backend", "vllm" if use_vllm else "pt",
-            "--served_model_name", served_model_name,
+            "vllm", "serve",
+            resolved_model_path,  # 位置参数：模型路径
         ]
 
-        # 端口（swift deploy 会自动调用 find_free_port，所以只在指定时添加）
-        if port is not None:
-            cmd.extend(["--port", str(port)])
+        # 前端配置（Frontend）
+        cmd.extend(["--host", host])
+        cmd.extend(["--port", str(port)])
 
-        # 添加 max_new_tokens（默认 2048，这是生成的最大 token 数）
-        max_new_tokens = kwargs.get("max_new_tokens", 2048)
-        cmd.extend(["--max_new_tokens", str(max_new_tokens)])
+        # 服务模型名称（可以是多个，用空格分隔）
+        if served_model_name:
+            if isinstance(served_model_name, str):
+                cmd.extend(["--served-model-name", served_model_name])
+            elif isinstance(served_model_name, list):
+                cmd.extend(["--served-model-name"] + served_model_name)
 
-        # Adapter 路径（确保不是 None 或空字符串）
+        # 模型配置（ModelConfig）
+        if dtype:
+            cmd.extend(["--dtype", dtype])
+
+        if trust_remote_code:
+            cmd.append("--trust-remote-code")
+
+        if max_model_len is not None:
+            cmd.extend(["--max-model-len", str(max_model_len)])
+
+        if quantization:
+            cmd.extend(["--quantization", quantization])
+
+        # 缓存配置（CacheConfig）
+        if gpu_memory_utilization is not None:
+            cmd.extend(["--gpu-memory-utilization", str(gpu_memory_utilization)])
+
+        # 并行配置（ParallelConfig）
+        if tensor_parallel_size is not None:
+            cmd.extend(["--tensor-parallel-size", str(tensor_parallel_size)])
+
+        # LoRA 配置（如果有 adapter）
         if adapter_path and adapter_path.strip():
-            cmd.extend(["--adapters", adapter_path])
+            cmd.append("--enable-lora")
+            cmd.extend(["--lora-modules", f"{deployment_id}={adapter_path}"])
 
-        # vLLM 特定参数（谨慎添加，可能不被所有版本支持）
-        # if gpu_memory_utilization is not None and use_vllm:
-        #     cmd.extend(["--gpu_memory_utilization", str(gpu_memory_utilization)])
-
-        # if quantization_bit:
-        #     cmd.extend(["--quantization_bit", str(quantization_bit)])
+        # 其他可选参数（通过 kwargs 传入）
+        # 支持的参数参考 vllm serve --help
+        for key, value in kwargs.items():
+            if value is not None and value != "":
+                # 将下划线转换为连字符（vllm 使用连字符）
+                param_name = key.replace("_", "-")
+                if isinstance(value, bool):
+                    if value:
+                        cmd.append(f"--{param_name}")
+                else:
+                    cmd.extend([f"--{param_name}", str(value)])
 
         # 日志文件
         log_file = DEPLOY_DIR / f"{deployment_id}.log"

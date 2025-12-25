@@ -16,20 +16,28 @@ from services.deploy_service import deploy_service
 
 # 请求/响应模型
 class DeployRequest(BaseModel):
-    """部署请求（兼容前端参数）"""
-    # 前端参数
+    """部署请求（支持 vllm serve 参数）"""
+    # 基础参数
     model_id_or_path: str  # 模型 ID 或路径
-    adapter_path: Optional[str] = None  # Adapter 路径（可选）
+    adapter_path: Optional[str] = None  # Adapter 路径（可选，如 LoRA adapter）
+    served_model_name: Optional[str] = None  # 服务模型名称（可选，默认从路径提取）
+
+    # 前端配置
     host: Optional[str] = "0.0.0.0"  # 服务 Host
-    port: Optional[int] = None  # 服务端口（None 表示自动分配）
-    gpu_id: Optional[str] = None  # GPU ID（None=自动分配，"0"=指定 GPU 0）
-    max_length: Optional[int] = None  # 最大长度
-    temperature: Optional[float] = 0.7  # 温度参数
-    top_p: Optional[float] = None  # Top-p 参数
-    use_vllm: Optional[bool] = True  # 是否使用 vLLM（默认 True）
+    port: Optional[int] = None  # 服务端口（None=自动分配，默认 8000）
+    gpu_id: Optional[str] = None  # GPU ID（None=自动分配，"0"=指定单卡）
+
+    # 模型配置
+    max_length: Optional[int] = None  # 最大上下文长度（max_model_len）
+    dtype: Optional[str] = "auto"  # 数据类型（auto, half, float16, bfloat16, float32）
+    trust_remote_code: Optional[bool] = False  # 是否信任远程代码
+    quantization: Optional[str] = None  # 量化方法（awq, gptq 等）
+
+    # 缓存配置
     gpu_memory_utilization: Optional[float] = 0.9  # GPU 内存利用率
-    max_num_batched_tokens: Optional[int] = None  # 最大批处理 token 数
-    quantization_bit: Optional[int] = None  # 量化位数
+
+    # 并行配置
+    tensor_parallel_size: Optional[int] = None  # 张量并行大小（多卡推理）
 
 
 class DeployResponse(BaseModel):
@@ -60,19 +68,34 @@ class DeploymentStatus(BaseModel):
 @router.post("/start", response_model=DeployResponse)
 async def start_deployment(request: DeployRequest, background_tasks: BackgroundTasks):
     """
-    启动模型部署服务（使用 vllm 后端）
+    启动模型部署服务（使用 vllm serve）
 
-    示例:
+    示例 1 - 基础部署:
         POST /api/deploy/start
         {
-            "model_id_or_path": "Qwen/Qwen2.5-7B-Instruct",
-            "adapter_path": "/app/output/train-12345678",
-            "port": 8080,
-            "use_vllm": true,
+            "model_id_or_path": "/app/models/Qwen/Qwen2.5-7B-Instruct",
+            "port": 8080
+        }
+
+    示例 2 - 带 LoRA Adapter:
+        POST /api/deploy/start
+        {
+            "model_id_or_path": "/app/models/Qwen/Qwen2.5-7B-Instruct",
+            "adapter_path": "/app/output/train-12345678/v0-xxx/checkpoint-100",
+            "port": 8081,
             "gpu_memory_utilization": 0.9
         }
 
-    部署成功后，可通过以下方式调用:
+    示例 3 - 多卡推理（张量并行）:
+        POST /api/deploy/start
+        {
+            "model_id_or_path": "/app/models/Qwen/Qwen2.5-72B-Instruct",
+            "tensor_parallel_size": 4,
+            "gpu_memory_utilization": 0.95,
+            "max_length": 32768
+        }
+
+    部署成功后，可通过 OpenAI 兼容 API 调用:
         curl http://localhost:8080/v1/chat/completions \\
         -H "Content-Type: application/json" \\
         -d '{
@@ -96,16 +119,15 @@ async def start_deployment(request: DeployRequest, background_tasks: BackgroundT
     print(f"[DEBUG] 模型路径: {request.model_id_or_path}")
     print(f"[DEBUG] Adapter 路径: {request.adapter_path}")
     print(f"[DEBUG] 端口: {request.port}")
-    print(f"[DEBUG] use_vllm: {request.use_vllm}")
     print(f"[DEBUG] max_length: {request.max_length}")
     print(f"[DEBUG] 完整请求对象: {request}")
 
     # 参数转换：前端 -> 后端
-    # served_model_name: 从模型路径提取（如 Qwen/Qwen2.5-7B-Instruct -> Qwen2.5-7B-Instruct）
-    served_model_name = request.model_id_or_path.split('/')[-1]
+    # served_model_name: 从请求获取，或从模型路径提取
+    served_model_name = request.served_model_name or request.model_id_or_path.split('/')[-1]
 
     try:
-        # 启动部署（异步，GPU 自动分配）
+        # 启动部署（使用 vllm serve）
         deployment_info = await deploy_service.start_deployment(
             deployment_id=deployment_id,
             model_path=request.model_id_or_path,
@@ -113,11 +135,13 @@ async def start_deployment(request: DeployRequest, background_tasks: BackgroundT
             served_model_name=served_model_name,
             host=request.host or "0.0.0.0",
             port=request.port,
-            gpu_devices=request.gpu_id,  # None=自动分配，"0"=指定 GPU
+            gpu_devices=request.gpu_id,  # None=自动分配，"0"=指定单卡
             max_model_len=request.max_length,
-            use_vllm=request.use_vllm if request.use_vllm is not None else True,
             gpu_memory_utilization=request.gpu_memory_utilization,
-            quantization_bit=request.quantization_bit,
+            tensor_parallel_size=request.tensor_parallel_size,
+            quantization=request.quantization,
+            dtype=request.dtype or "auto",
+            trust_remote_code=request.trust_remote_code or False,
         )
         logger.info(f"部署成功: {deployment_id}")
 
