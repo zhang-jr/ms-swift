@@ -425,7 +425,14 @@ const DeployPage = () => {
                   }
                   optionRender={(option) => {
                     // 下拉列表中的自定义渲染
-                    const m = (option.data as unknown as { model: ModelInfo }).model
+                    const modelData = option?.data as { model?: ModelInfo } | undefined
+
+                    // 降级方案：如果没有 model 数据，只显示 label
+                    if (!modelData?.model) {
+                      return <div>{option.label}</div>
+                    }
+
+                    const m = modelData.model
                     return (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div style={{ flex: 1, overflow: 'hidden' }}>
