@@ -36,21 +36,48 @@ class DeployService:
 
     def _get_available_gpus(self) -> List[str]:
         """
-        获取可用 GPU 列表（从 CUDA_VISIBLE_DEVICES 读取）
+        获取可用 GPU 列表
+
+        优先级：
+        1. 如果设置了 CUDA_VISIBLE_DEVICES，使用该变量
+        2. 否则通过 nvidia-smi 查询所有可用 GPU
+        3. 如果 nvidia-smi 不可用，默认返回 ["0"]
 
         Returns:
             list: GPU ID 列表（如 ['0', '1', '2', '3']）
         """
-        cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
-        print(f"[DEBUG][GPU] CUDA_VISIBLE_DEVICES: {cuda_visible_devices}")
-
-        # 解析 CUDA_VISIBLE_DEVICES（支持 "0,1,2,3" 或 "0" 格式）
-        if cuda_visible_devices:
-            gpu_ids = [gpu.strip() for gpu in cuda_visible_devices.split(",")]
+        # 1. 优先使用 CUDA_VISIBLE_DEVICES（如果已设置）
+        cuda_visible_devices = os.environ.get("CUDA_VISIBLE_DEVICES")
+        if cuda_visible_devices is not None:
+            gpu_ids = [gpu.strip() for gpu in cuda_visible_devices.split(",") if gpu.strip()]
+            print(f"[DEBUG][GPU] CUDA_VISIBLE_DEVICES: {gpu_ids}")
             return gpu_ids
-        else:
-            # 默认使用 GPU 0
-            return ["0"]
+
+        # 2. 通过 nvidia-smi 查询所有可用 GPU
+        try:
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=index", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+
+            if result.returncode == 0:
+                gpu_ids = [gpu.strip() for gpu in result.stdout.strip().split("\n") if gpu.strip()]
+                print(f"[DEBUG][GPU] nvidia-smi 检测到 {len(gpu_ids)} 个 GPU: {gpu_ids}")
+                return gpu_ids
+            else:
+                print(f"[WARNING][GPU] nvidia-smi 执行失败: {result.stderr}")
+        except FileNotFoundError:
+            print(f"[WARNING][GPU] nvidia-smi 不可用，可能未安装 NVIDIA 驱动")
+        except subprocess.TimeoutExpired:
+            print(f"[WARNING][GPU] nvidia-smi 执行超时")
+        except Exception as e:
+            print(f"[WARNING][GPU] nvidia-smi 执行异常: {e}")
+
+        # 3. 默认返回 GPU 0
+        print(f"[WARNING][GPU] 回退到默认 GPU: ['0']")
+        return ["0"]
 
     def _get_used_gpus(self) -> set:
         """
