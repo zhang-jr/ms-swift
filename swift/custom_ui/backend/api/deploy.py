@@ -262,7 +262,8 @@ async def list_deployments():
         for d in deployments:
             formatted_deployments.append({
                 "deployment_id": d["deployment_id"],
-                "model_id": d["model_path"],  # 前端期望 model_id
+                "model_id": d["model_path"],  # 保留旧字段（兼容性）
+                "model_path": d["model_path"],  # 前端 tooltip 使用
                 "endpoint": d["api_endpoint"],  # 前端期望 endpoint
                 "status": d["status"],
                 "created_at": d.get("started_at", 0) * 1000,  # 转换为毫秒时间戳
@@ -270,7 +271,8 @@ async def list_deployments():
                 "base_url": d["base_url"],
                 "pid": d.get("pid"),
                 "uptime_seconds": d.get("uptime_seconds"),
-                "gpu_id": d.get("gpu_devices", "N/A"),  # 添加 GPU 信息
+                "gpu_id": d.get("gpu_id", "N/A"),  # 修复：使用 gpu_id 而非 gpu_devices
+                "served_model_name": d.get("served_model_name", ""),  # 添加模型名称
             })
 
         return {"deployments": formatted_deployments}
