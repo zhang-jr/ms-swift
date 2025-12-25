@@ -679,6 +679,57 @@ class DeployService:
             all_lines = f.readlines()
             return "".join(all_lines[-lines:])
 
+    def delete_deployment(self, deployment_id: str, remove_logs: bool = False):
+        """
+        删除部署（如果正在运行则先停止）
+
+        Args:
+            deployment_id: 部署 ID
+            remove_logs: 是否删除日志文件（默认 False，保留日志）
+
+        Raises:
+            ValueError: 部署不存在
+        """
+        if deployment_id not in self.running_deployments:
+            raise ValueError(f"部署 {deployment_id} 不存在")
+
+        deployment = self.running_deployments[deployment_id]
+        status = deployment.get("status", "unknown")
+
+        print(f"[DEBUG] 删除部署: {deployment_id} (状态: {status})")
+
+        # 1. 如果部署正在运行或启动中，先停止
+        if status in ["starting", "running", "unhealthy"]:
+            print(f"[DEBUG] 部署 {deployment_id} 正在运行，先停止...")
+            try:
+                self.stop_deployment(deployment_id)
+                print(f"[DEBUG] ✓ 部署 {deployment_id} 已停止")
+            except Exception as e:
+                print(f"[WARNING] 停止部署失败，继续删除: {e}")
+        else:
+            # 2. 如果部署已失败或超时，只需取消监控任务
+            if deployment_id in self.monitor_tasks:
+                monitor_task = self.monitor_tasks[deployment_id]
+                if not monitor_task.done():
+                    monitor_task.cancel()
+                    print(f"[DEBUG] ✓ 已取消监控任务: {deployment_id}")
+                del self.monitor_tasks[deployment_id]
+
+        # 3. 删除日志文件（可选）
+        if remove_logs:
+            log_file = Path(deployment.get("log_file", ""))
+            if log_file.exists():
+                try:
+                    log_file.unlink()
+                    print(f"[DEBUG] ✓ 已删除日志文件: {log_file}")
+                except Exception as e:
+                    print(f"[WARNING] 删除日志文件失败: {e}")
+
+        # 4. 从运行列表中移除
+        if deployment_id in self.running_deployments:
+            del self.running_deployments[deployment_id]
+            print(f"[DEBUG] ✓ 部署 {deployment_id} 已从列表中移除")
+
 
 # 全局实例
 deploy_service = DeployService()

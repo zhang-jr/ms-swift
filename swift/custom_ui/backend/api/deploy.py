@@ -194,6 +194,32 @@ async def stop_deployment(deployment_id: str):
         raise HTTPException(status_code=500, detail=f"停止部署失败: {str(e)}")
 
 
+@router.delete("/delete/{deployment_id}")
+async def delete_deployment(deployment_id: str, remove_logs: bool = False):
+    """
+    删除部署（如果正在运行则先停止）
+
+    Args:
+        deployment_id: 部署 ID
+        remove_logs: 是否删除日志文件（默认 False，保留日志）
+
+    Returns:
+        dict: 操作结果
+    """
+    try:
+        deploy_service.delete_deployment(deployment_id, remove_logs=remove_logs)
+        return {
+            "message": f"部署 {deployment_id} 已删除",
+            "deployment_id": deployment_id
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"删除部署失败: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"删除部署失败: {str(e)}")
+
+
 @router.get("/status/{deployment_id}", response_model=DeploymentStatus)
 async def get_deployment_status(deployment_id: str):
     """
