@@ -12,6 +12,7 @@ import {
   InputNumber,
   Popconfirm,
   Descriptions,
+  Collapse,
 } from 'antd'
 import {
   UploadOutlined,
@@ -45,9 +46,18 @@ const DataManagementPage = () => {
     output_format: 'parquet',
     shard_size_mb: 500,  // 默认 500MB
     output_name: '',
+    use_prompt_templates: false,  // 默认不使用 Prompt 模板
   })
   const [convertResultVisible, setConvertResultVisible] = useState(false)
   const [convertResult, setConvertResult] = useState<ConvertResponse | null>(null)
+
+  // Prompt 模板预览相关状态
+  const [promptTemplates, setPromptTemplates] = useState<{
+    image: string | null
+    pdf: string | null
+    video: string | null
+  } | null>(null)
+  const [promptLoading, setPromptLoading] = useState(false)
 
   // 加载数据集列表
   const loadDatasets = async () => {
@@ -132,6 +142,21 @@ const DataManagementPage = () => {
     }
   }
 
+  // 加载 Prompt 模板
+  const loadPromptTemplates = async () => {
+    if (promptTemplates) return // 已经加载过了
+
+    setPromptLoading(true)
+    try {
+      const templates = await dataAPI.getPromptTemplates()
+      setPromptTemplates(templates)
+    } catch (error: any) {
+      message.error(`加载 Prompt 模板失败: ${error.message}`)
+    } finally {
+      setPromptLoading(false)
+    }
+  }
+
   // 打开转换模态框
   const handleOpenConvert = (projectName: string) => {
     setConvertConfig({
@@ -139,8 +164,12 @@ const DataManagementPage = () => {
       output_format: 'parquet',
       shard_size_mb: 500,  // 默认 500MB
       output_name: '',  // 输出到项目内 data/ 目录，不需要用户自定义名称
+      use_prompt_templates: false,  // 默认不使用 Prompt 模板
     })
     setConvertModalVisible(true)
+
+    // 预加载 Prompt 模板（方便用户查看）
+    loadPromptTemplates()
   }
 
   // 执行转换
@@ -490,6 +519,115 @@ const DataManagementPage = () => {
             </div>
           )}
 
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>Prompt 策略:</div>
+            <Space>
+              <Button
+                type={!convertConfig.use_prompt_templates ? 'primary' : 'default'}
+                onClick={() =>
+                  setConvertConfig({ ...convertConfig, use_prompt_templates: false })
+                }
+              >
+                保持原始 Query
+              </Button>
+              <Button
+                type={convertConfig.use_prompt_templates ? 'primary' : 'default'}
+                onClick={() =>
+                  setConvertConfig({ ...convertConfig, use_prompt_templates: true })
+                }
+              >
+                使用专业 Prompt 模板
+              </Button>
+            </Space>
+            <div style={{ marginTop: 4, fontSize: 12, color: 'rgba(255, 255, 255, 0.45)' }}>
+              {convertConfig.use_prompt_templates ? (
+                <>
+                  ✓ 使用文档伪造识别专用 Prompt（推荐用于生产训练）
+                </>
+              ) : (
+                <>
+                  保持标注平台的原始 query（适合调试和验证）
+                </>
+              )}
+            </div>
+
+            {/* Prompt 模板预览 */}
+            {convertConfig.use_prompt_templates && promptTemplates && (
+              <div style={{ marginTop: 12 }}>
+                <Collapse
+                  ghost
+                  items={[
+                    {
+                      key: 'prompt-preview',
+                      label: '📝 预览 Prompt 模板',
+                      children: (
+                        <div style={{ maxHeight: 300, overflow: 'auto' }}>
+                          {promptTemplates.image && (
+                            <div style={{ marginBottom: 16 }}>
+                              <div style={{ fontWeight: 500, marginBottom: 4, color: '#52c41a' }}>
+                                图像分析 Prompt:
+                              </div>
+                              <pre
+                                style={{
+                                  background: 'rgba(0, 0, 0, 0.2)',
+                                  padding: 8,
+                                  borderRadius: 4,
+                                  fontSize: 11,
+                                  lineHeight: 1.4,
+                                  whiteSpace: 'pre-wrap',
+                                }}
+                              >
+                                {promptTemplates.image}
+                              </pre>
+                            </div>
+                          )}
+                          {promptTemplates.pdf && (
+                            <div style={{ marginBottom: 16 }}>
+                              <div style={{ fontWeight: 500, marginBottom: 4, color: '#1890ff' }}>
+                                PDF 分析 Prompt:
+                              </div>
+                              <pre
+                                style={{
+                                  background: 'rgba(0, 0, 0, 0.2)',
+                                  padding: 8,
+                                  borderRadius: 4,
+                                  fontSize: 11,
+                                  lineHeight: 1.4,
+                                  whiteSpace: 'pre-wrap',
+                                }}
+                              >
+                                {promptTemplates.pdf}
+                              </pre>
+                            </div>
+                          )}
+                          {promptTemplates.video && (
+                            <div>
+                              <div style={{ fontWeight: 500, marginBottom: 4, color: '#faad14' }}>
+                                视频分析 Prompt:
+                              </div>
+                              <pre
+                                style={{
+                                  background: 'rgba(0, 0, 0, 0.2)',
+                                  padding: 8,
+                                  borderRadius: 4,
+                                  fontSize: 11,
+                                  lineHeight: 1.4,
+                                  whiteSpace: 'pre-wrap',
+                                }}
+                              >
+                                {promptTemplates.video}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      ),
+                    },
+                  ]}
+                />
+              </div>
+            )}
+          </div>
+
           <div style={{ padding: 12, background: 'rgba(102, 126, 234, 0.1)', borderRadius: 4 }}>
             <div style={{ fontSize: 12, color: 'rgba(255, 255, 255, 0.65)' }}>
               💡 数据源说明：
@@ -551,6 +689,18 @@ const DataManagementPage = () => {
               </Descriptions.Item>
               <Descriptions.Item label="视频样本">
                 {convertResult.summary.media_types.video}
+              </Descriptions.Item>
+              <Descriptions.Item label="Prompt 策略" span={2}>
+                <Tag color={convertResult.summary.prompt_strategy === 'template' ? 'green' : 'blue'}>
+                  {convertResult.summary.prompt_strategy === 'template' ? '专业 Prompt 模板' : '原始 Query'}
+                </Tag>
+                {convertResult.summary.prompt_strategy === 'template' &&
+                  convertResult.summary.prompt_templates_loaded &&
+                  convertResult.summary.prompt_templates_loaded.length > 0 && (
+                  <span style={{ marginLeft: 8, fontSize: 12, color: 'rgba(255, 255, 255, 0.65)' }}>
+                    已加载: {convertResult.summary.prompt_templates_loaded.join(', ')}
+                  </span>
+                )}
               </Descriptions.Item>
               <Descriptions.Item label="文件数量" span={2}>
                 {convertResult.output_files.length} 个文件

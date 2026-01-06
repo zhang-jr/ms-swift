@@ -642,6 +642,7 @@ class ConvertRequest(BaseModel):
     output_format: str = "parquet"  # 输出格式: parquet 或 jsonl
     shard_size_mb: int = 100  # Parquet 分片大小（MB）
     output_name: Optional[str] = None  # 输出文件夹名称（默认为 {project_name}_converted）
+    use_prompt_templates: bool = False  # 是否使用预定义的 Prompt 模板替换原 query
 
 
 class ConvertResponse(BaseModel):
@@ -701,8 +702,11 @@ async def convert_annotation_dataset(request: ConvertRequest):
     from services.dataset_converter_service import DatasetConverter
 
     try:
-        # 初始化转换器
-        converter = DatasetConverter(request.project_name)
+        # 初始化转换器（传递 use_prompt_templates 参数）
+        converter = DatasetConverter(
+            project_name=request.project_name,
+            use_prompt_templates=request.use_prompt_templates
+        )
 
         # 转换所有数据（从 uploads 文件夹读取原始数据）
         results = converter.convert_all()
@@ -799,3 +803,33 @@ async def get_convert_formats():
             "video (mp4)"
         ]
     }
+
+
+@router.get("/prompt-templates")
+async def get_prompt_templates():
+    """获取所有 Prompt 模板内容"""
+    from pathlib import Path
+
+    prompts = {}
+
+    # Prompt 模板目录
+    prompt_dir = Path(__file__).parent.parent / "services" / "prompts"
+
+    if not prompt_dir.exists():
+        raise HTTPException(status_code=404, detail="Prompt 模板目录不存在")
+
+    # 加载三种媒体类型的 Prompt 模板
+    for media_type in ["image", "pdf", "video"]:
+        prompt_file = prompt_dir / f"{media_type}_analysis_prompt.txt"
+        if prompt_file.exists():
+            try:
+                prompts[media_type] = prompt_file.read_text(encoding='utf-8')
+            except Exception as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"加载 Prompt 模板失败 ({media_type}): {str(e)}"
+                )
+        else:
+            prompts[media_type] = None
+
+    return prompts

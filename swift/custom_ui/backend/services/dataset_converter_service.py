@@ -58,22 +58,27 @@ DATA_DIR = Path("/app/data")
 class DatasetConverter:
     """数据集转换器（重构版 - 使用 uploads 原始数据）"""
 
-    def __init__(self, project_name: str):
+    def __init__(self, project_name: str, use_prompt_templates: bool = False):
         """
         初始化转换器
 
         Args:
             project_name: 标注项目文件夹名称（位于 /app/data 下）
+            use_prompt_templates: 是否使用预定义的 Prompt 模板替换原 query
         """
         # 安全验证：防止路径遍历攻击
         if ".." in project_name or "/" in project_name or "\\" in project_name:
             raise ValueError(f"非法的项目名称: {project_name}")
 
         self.project_name = project_name
+        self.use_prompt_templates = use_prompt_templates
         self.project_root = DATA_DIR / project_name
         self.instructions_dir = self.project_root / "instructions"  # 标注数据
         self.uploads_dir = self.project_root / "uploads"  # 原始媒体文件
         self.data_dir = self.project_root / "data"  # 输出目录
+
+        # 加载 Prompt 模板
+        self.prompt_templates = self._load_prompt_templates()
 
         # 验证目录
         self._validate_directories()
@@ -88,6 +93,36 @@ class DatasetConverter:
 
         if not self.uploads_dir.exists():
             logger.warning(f"uploads 目录不存在: {self.uploads_dir}")
+
+    def _load_prompt_templates(self) -> Dict[str, str]:
+        """
+        从文件加载 Prompt 模板
+
+        Returns:
+            媒体类型 -> Prompt 模板内容的字典
+        """
+        prompts = {}
+
+        # Prompt 模板目录（与本文件同级的 prompts 目录）
+        prompt_dir = Path(__file__).parent / "prompts"
+
+        if not prompt_dir.exists():
+            logger.warning(f"Prompt 模板目录不存在: {prompt_dir}")
+            return prompts
+
+        # 加载三种媒体类型的 Prompt 模板
+        for media_type in ["image", "pdf", "video"]:
+            prompt_file = prompt_dir / f"{media_type}_analysis_prompt.txt"
+            if prompt_file.exists():
+                try:
+                    prompts[media_type] = prompt_file.read_text(encoding='utf-8')
+                    logger.info(f"✓ 加载 Prompt 模板: {prompt_file.name}")
+                except Exception as e:
+                    logger.error(f"加载 Prompt 模板失败 {prompt_file}: {e}")
+            else:
+                logger.warning(f"Prompt 模板文件不存在: {prompt_file}")
+
+        return prompts
 
     def image_to_data_url(self, image_path: Path) -> str:
         """
@@ -144,9 +179,16 @@ class DatasetConverter:
         # 转换为 Data URL 格式
         image_data_url = self.image_to_data_url(upload_path)
 
+        # 决定使用原 instruction 还是 Prompt 模板
+        if self.use_prompt_templates and "image" in self.prompt_templates:
+            user_query = self.prompt_templates["image"]
+            logger.debug(f"使用 Prompt 模板: image_analysis_prompt.txt")
+        else:
+            user_query = inst_data.get("instruction", "")
+
         # 构建 MS-SWIFT 格式（query-response）
         return {
-            "query": f"<image>{inst_data['instruction']}",  # 用户问题
+            "query": f"<image>{user_query}",  # 用户问题
             "response": inst_data["raw_response"],  # 助手回答
             "system": "",  # 系统提示（可选）
             "history": [],  # 历史对话（单轮 QA 为空）
@@ -217,9 +259,16 @@ class DatasetConverter:
             logger.warning(f"PDF {pdf_rel_path} 没有可用的页面")
             return None
 
+        # 决定使用原 instruction 还是 Prompt 模板
+        if self.use_prompt_templates and "pdf" in self.prompt_templates:
+            user_query = self.prompt_templates["pdf"]
+            logger.debug(f"使用 Prompt 模板: pdf_analysis_prompt.txt")
+        else:
+            user_query = inst_data.get("instruction", "")
+
         # 构建 query（多个 <image> 占位符）
         image_placeholders = "".join(["<image>"] * len(images_data_urls))
-        query = f"{image_placeholders}{inst_data['instruction']}"
+        query = f"{image_placeholders}{user_query}"
 
         # 构建 MS-SWIFT 格式（query-response）
         return {
@@ -263,9 +312,16 @@ class DatasetConverter:
             logger.warning(f"原始视频不存在: {upload_path}")
             return None
 
+        # 决定使用原 instruction 还是 Prompt 模板
+        if self.use_prompt_templates and "video" in self.prompt_templates:
+            user_query = self.prompt_templates["video"]
+            logger.debug(f"使用 Prompt 模板: video_analysis_prompt.txt")
+        else:
+            user_query = inst_data.get("instruction", "")
+
         # 构建 MS-SWIFT 格式（query-response）
         return {
-            "query": f"<video>{inst_data['instruction']}",  # 用户问题
+            "query": f"<video>{user_query}",  # 用户问题
             "response": inst_data["raw_response"],  # 助手回答
             "system": "",  # 系统提示（可选）
             "history": [],  # 历史对话（单轮 QA 为空）
@@ -595,6 +651,8 @@ class DatasetConverter:
             "total_videos": 0,
             "providers": {},
             "models": {},
+            "prompt_strategy": "template" if self.use_prompt_templates else "original",
+            "prompt_templates_loaded": list(self.prompt_templates.keys()) if self.use_prompt_templates else [],
         }
 
         for result in results:

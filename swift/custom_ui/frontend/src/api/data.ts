@@ -159,6 +159,7 @@ export interface ConvertRequest {
   output_format?: 'parquet' | 'jsonl'
   shard_size_mb?: number
   output_name?: string
+  use_prompt_templates?: boolean  // 是否使用预定义的 Prompt 模板
 }
 
 export interface ConvertResponse {
@@ -175,6 +176,8 @@ export interface ConvertResponse {
     total_images: number
     providers: Record<string, number>
     models: Record<string, number>
+    prompt_strategy?: string  // 'template' | 'original'
+    prompt_templates_loaded?: string[]  // ['image', 'pdf', 'video']
   }
 }
 
@@ -232,6 +235,18 @@ export const getConvertFormats = async (): Promise<{
   return response as any
 }
 
+/**
+ * 获取所有 Prompt 模板内容
+ */
+export const getPromptTemplates = async (): Promise<{
+  image: string | null
+  pdf: string | null
+  video: string | null
+}> => {
+  const response = await apiClient.get('/data/prompt-templates')
+  return response as any
+}
+
 export const dataAPI = {
   listDatasets,
   uploadFile,
@@ -245,4 +260,5 @@ export const dataAPI = {
   validateAnnotationProject,
   convertAnnotationDataset,
   getConvertFormats,
+  getPromptTemplates,
 }
