@@ -57,7 +57,6 @@ const DataManagementPage = () => {
     pdf: string | null
     video: string | null
   } | null>(null)
-  const [promptLoading, setPromptLoading] = useState(false)
 
   // 加载数据集列表
   const loadDatasets = async () => {
@@ -146,14 +145,11 @@ const DataManagementPage = () => {
   const loadPromptTemplates = async () => {
     if (promptTemplates) return // 已经加载过了
 
-    setPromptLoading(true)
     try {
       const templates = await dataAPI.getPromptTemplates()
       setPromptTemplates(templates)
     } catch (error: any) {
       message.error(`加载 Prompt 模板失败: ${error.message}`)
-    } finally {
-      setPromptLoading(false)
     }
   }
 
