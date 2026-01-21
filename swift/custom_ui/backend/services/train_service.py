@@ -7,7 +7,7 @@ import os
 import subprocess
 import signal
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Tuple
 from datetime import datetime
 import json
 import re
@@ -16,6 +16,58 @@ import re
 DATA_DIR = Path("/app/data")
 MODEL_DIR = Path(os.getenv("MODEL_DIR", "/app/models"))
 OUTPUT_DIR = Path("/app/output")
+
+
+def detect_gpus() -> Tuple[int, str]:
+    """
+    自动检测可用的 GPU 数量和设备 ID
+
+    优先级:
+    1. 环境变量 CUDA_VISIBLE_DEVICES（如果已设置）
+    2. 自动检测所有可用 GPU
+
+    Returns:
+        Tuple[int, str]: (GPU 数量, CUDA_VISIBLE_DEVICES 字符串)
+    """
+    # 如果环境变量已设置，使用环境变量
+    cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES')
+    if cuda_visible is not None and cuda_visible.strip():
+        gpu_ids = [x.strip() for x in cuda_visible.split(',') if x.strip()]
+        return len(gpu_ids), cuda_visible
+
+    # 尝试使用 torch 检测
+    try:
+        import torch
+        if torch.cuda.is_available():
+            gpu_count = torch.cuda.device_count()
+            if gpu_count > 0:
+                gpu_ids = ','.join(str(i) for i in range(gpu_count))
+                return gpu_count, gpu_ids
+    except ImportError:
+        pass
+
+    # 尝试使用 nvidia-smi 检测
+    try:
+        result = subprocess.run(
+            ['nvidia-smi', '--query-gpu=index', '--format=csv,noheader'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            gpu_ids = [x.strip() for x in result.stdout.strip().split('\n') if x.strip()]
+            if gpu_ids:
+                return len(gpu_ids), ','.join(gpu_ids)
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+
+    # 默认单卡
+    return 1, '0'
+
+
+# 启动时检测 GPU 并缓存结果
+_GPU_COUNT, _CUDA_VISIBLE_DEVICES = detect_gpus()
+print(f"[train_service] 检测到 {_GPU_COUNT} 个 GPU, CUDA_VISIBLE_DEVICES={_CUDA_VISIBLE_DEVICES}")
 
 class TrainService:
     """训练服务类"""
@@ -216,6 +268,29 @@ class TrainService:
         if model_name:
             cmd.extend(["--model_name", model_name])
 
+        # ========== 性能优化参数 ==========
+
+        # Attention 实现方式（默认使用 flash_attn 提升性能）
+        # 可选: 'sdpa', 'eager', 'flash_attn', 'flash_attention_2', 'flash_attention_3'
+        attn_impl = config.get('attn_impl', 'flash_attn')
+        cmd.extend(["--attn_impl", attn_impl])
+
+        # DeepSpeed 配置（默认使用 zero3 支持大模型训练）
+        # 可选: 'zero0', 'zero1', 'zero2', 'zero3', 'zero2_offload', 'zero3_offload'
+        # 也可以传入自定义 deepspeed 配置文件路径
+        deepspeed = config.get('deepspeed', 'zero3')
+        cmd.extend(["--deepspeed", deepspeed])
+
+        # Gradient Checkpointing（默认已开启，可以显著降低显存）
+        gradient_checkpointing = config.get('gradient_checkpointing')
+        if gradient_checkpointing is not None:
+            cmd.extend(["--gradient_checkpointing", str(gradient_checkpointing).lower()])
+
+        # Padding Free（降低显存占用，需配合 flash_attn 使用）
+        padding_free = config.get('padding_free')
+        if padding_free:
+            cmd.extend(["--padding_free", "true"])
+
         return cmd
 
     async def run_training(self, task_id: str, config: Dict[str, Any]):
@@ -239,9 +314,21 @@ class TrainService:
             # 构建训练命令
             cmd = self.build_train_command(task_id, config)
 
-            # 记录命令
+            # 构建训练环境变量（自动检测 GPU 并设置分布式训练）
+            train_env = {
+                **os.environ,
+                'PYTHONUNBUFFERED': '1',
+                'CUDA_VISIBLE_DEVICES': _CUDA_VISIBLE_DEVICES,
+                'NPROC_PER_NODE': str(_GPU_COUNT),
+            }
+
+            # 记录命令和环境
             cmd_str = " ".join(cmd)
-            await self._send_log_to_websocket(task_id, f"[开始训练] 命令: {cmd_str}\n")
+            await self._send_log_to_websocket(
+                task_id,
+                f"[开始训练] GPU: {_GPU_COUNT} 个 (CUDA_VISIBLE_DEVICES={_CUDA_VISIBLE_DEVICES})\n"
+                f"[开始训练] 命令: {cmd_str}\n"
+            )
 
             # 启动训练进程
             process = subprocess.Popen(
@@ -251,7 +338,7 @@ class TrainService:
                 text=True,
                 bufsize=1,
                 universal_newlines=True,
-                env={**os.environ, 'PYTHONUNBUFFERED': '1'}
+                env=train_env
             )
 
             # 保存进程引用
